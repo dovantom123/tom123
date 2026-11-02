@@ -205,3 +205,11 @@ test("ket-noi: kiểm tra Worker, thử token, đặt webhook; bắt lỗi bí m
     r = await run(["ftp://sai"], {}); assert.equal(r.code, 1); assert.match(r.out, /không hợp lệ/);
   } finally { wsrv.close(); tsrv.close(); fs.rmSync(emptyBin, { recursive: true, force: true }); }
 });
+
+test("cai-tat-ca.ps1: có BOM UTF-8 (PowerShell 5 đọc đúng tiếng Việt), ngoặc cân bằng, hỏi xác nhận trước khi cài và không chứa bí mật", () => {
+  const raw = fs.readFileSync(path.join(ROOT, "scripts/cai-tat-ca.ps1")), s = raw.toString("utf8").replace(/^﻿/, "");
+  assert.deepEqual([...raw.subarray(0, 3)], [0xEF, 0xBB, 0xBF]);
+  for (const [a, b] of [["{", "}"], ["(", ")"]]) assert.equal(s.split(a).length, s.split(b).length, `${a}${b} cân bằng`);
+  assert.match(s, /Hoi "Cài Agent Reach"/); assert.match(s, /Hoi "Nối bot Telegram/); assert.match(s, /ket-noi\.cjs/);
+  assert.doesNotMatch(s, /\b\d{6,}:[A-Za-z0-9_-]{20,}\b|sk-[A-Za-z0-9]{20,}/, "không có token/khóa");
+});
