@@ -162,6 +162,10 @@ Khi đã bật cảnh báo Telegram (mục trên), bot còn **nhận lệnh từ
 - Tắt hẳn phần nhận lệnh bằng `"inbound": false` (vẫn nhận cảnh báo).
 - Chưa làm: nút Cho phép / Từ chối quyền ngay trong Telegram (duyệt nhầm lệnh nguy hiểm từ điện thoại là rủi ro lớn).
 
+## Ra lệnh qua Telegram 24/7 mà không cần máy chủ (Cloudflare Worker + GitHub Actions)
+
+Không có máy nào bật suốt? Gõ `/viec <việc>` hoặc `/hoi <câu hỏi>` trong Telegram: một Cloudflare Worker (miễn phí, luôn chạy) kích hoạt GitHub Actions, Claude Code sửa mã trong repo của bạn và **mở Pull Request** (không tự gộp), rồi báo kết quả về Telegram. Mỗi lệnh là một lần chạy mới, không có phiên sống và không hiện trên văn phòng 3D. Hướng dẫn từng bước: [serverless/HUONG-DAN.md](serverless/HUONG-DAN.md).
+
 ## Chạy 24/7 trên máy chủ đám mây (VPS)
 
 Muốn máy tính tắt mà vẫn giao việc và nhận báo cáo qua Telegram thì chạy **cả Claude Code lẫn văn phòng trên cùng một VPS** (văn phòng đọc nhật ký trên máy nó chạy). Hướng dẫn từng bước, kèm file systemd và script tmux: [deploy/HUONG-DAN-VPS.md](deploy/HUONG-DAN-VPS.md). Muốn xem văn phòng bằng tên miền riêng https, bước 11 của hướng dẫn đó dùng **Cloudflare Tunnel** (không mở cổng) + Cloudflare Access.
@@ -217,6 +221,7 @@ lib/                   tgbot (nhận lệnh Telegram) · commandq (hàng đợi 
 tools/vp.js            công cụ ghi sổ cho agent
 tools/hooks.js         cài / gỡ / xem hook Claude Code
 tools/alerts.js        xem / tìm chat id / gửi tin thử cho cảnh báo Telegram
+serverless/            Telegram → Cloudflare Worker → GitHub Actions (không cần máy chủ); workflow ở .github/workflows/telegram-*.yml
 deploy/                hướng dẫn và file cho VPS: systemd, tmux, Cloudflare Tunnel, mẫu biến môi trường
 hooks/emit.js          hook: rút gọn sự kiện rồi POST về máy chủ (và nhận việc giao từ xa)
 test/                  npm test (node --test, không cần thư viện)

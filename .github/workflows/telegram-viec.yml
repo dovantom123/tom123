@@ -1,0 +1,111 @@
+# Giao việc qua Telegram: Cloudflare Worker gửi sự kiện "telegram-viec" → Claude sửa mã → đẩy lên nhánh riêng → mở Pull Request → báo lại Telegram.
+# Claude CHỈ sửa tệp trong thư mục làm việc. Commit, đẩy nhánh và mở PR do các bước bên dưới làm (không giao cho Claude), và không bao giờ đẩy thẳng vào nhánh chính.
+# Hướng dẫn cài: serverless/HUONG-DAN.md. Cần: secret ANTHROPIC_API_KEY (hoặc CLAUDE_CODE_OAUTH_TOKEN), secret TELEGRAM_BOT_TOKEN, variable OWNER_CHAT_ID.
+name: Telegram - giao việc
+
+on:
+  repository_dispatch:
+    types: [telegram-viec]
+
+permissions:
+  contents: write        # đẩy nhánh claude/telegram-*
+  pull-requests: write   # mở PR (cũng cần bật: Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests")
+
+concurrency:
+  group: telegram-viec
+  cancel-in-progress: false   # việc đến sau xếp hàng, không hủy việc đang làm
+
+jobs:
+  viec:
+    # Lớp bảo vệ thứ hai: chỉ chạy nếu yêu cầu mang đúng chat id của chủ (biến OWNER_CHAT_ID chưa đặt thì KHÔNG chạy).
+    if: ${{ vars.OWNER_CHAT_ID != '' && github.event.client_payload.chat_id == vars.OWNER_CHAT_ID }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      CHAT_ID: ${{ github.event.client_payload.chat_id }}
+      TASK: ${{ github.event.client_payload.task }}
+      BRANCH: claude/telegram-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false   # token không nằm lại trong .git/config cho Claude hay mã kiểm thử đọc
+
+      - name: Tạo nhánh làm việc
+        run: git checkout -b "$BRANCH"
+
+      - name: Claude làm việc
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            Bạn đang chạy trong GitHub Actions theo yêu cầu của chủ repo, gửi qua Telegram.
+
+            VIỆC CẦN LÀM:
+            ${{ github.event.client_payload.task }}
+
+            QUY TẮC:
+            - Chỉ đọc và sửa tệp trong thư mục làm việc hiện tại.
+            - KHÔNG chạy git commit, git push hay tạo Pull Request: bước sau sẽ làm.
+            - KHÔNG sửa thư mục .github/workflows và không đọc hay ghi tệp chứa bí mật (.env, khóa, token).
+            - Làm đúng việc được giao, thay đổi nhỏ nhất đủ dùng. Nếu việc mơ hồ hoặc nguy hiểm, đừng sửa gì và giải thích vì sao.
+            - Nếu repo có kiểm thử, chạy chúng và sửa cho qua.
+            - Kết thúc bằng tóm tắt 3 đến 6 dòng bằng tiếng Việt: đã làm gì, tệp nào đổi, kiểm thử ra sao, việc còn dang dở.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(node --test),Bash(npm test),Bash(npm run test)"
+
+      - name: Commit, đẩy nhánh, mở Pull Request
+        id: pr
+        if: ${{ steps.claude.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ github.event.repository.default_branch }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git config user.name "claude-telegram[bot]"
+          git config user.email "claude-telegram[bot]@users.noreply.github.com"
+          git add -A
+          git reset -q -- .github/workflows 2>/dev/null || true   # không bao giờ đưa thay đổi workflow vào PR
+          if git diff --cached --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          TITLE="$(printf '%s' "$TASK" | tr '\n\r' '  ' | cut -c1-70)"
+          git commit -q -m "Telegram: ${TITLE}" -m "Yêu cầu qua Telegram, chạy bởi GitHub Actions run ${GITHUB_RUN_ID}."
+          HDR="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::${HDR#AUTHORIZATION: basic }"
+          git -c "http.https://github.com/.extraheader=${HDR}" push origin "HEAD:refs/heads/${BRANCH}"
+          {
+            printf 'Yêu cầu qua Telegram:\n\n> %s\n\n' "$(printf '%s' "$TASK" | tr '\n\r' '  ' | cut -c1-1500)"
+            printf 'Chạy bởi GitHub Actions: %s/%s/actions/runs/%s\n\n' "$GITHUB_SERVER_URL" "$REPO" "$GITHUB_RUN_ID"
+            printf 'Hãy xem kỹ thay đổi trước khi gộp.\n'
+          } > "$RUNNER_TEMP/pr-body.md"
+          URL="$(gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" --title "Telegram: ${TITLE}" --body-file "$RUNNER_TEMP/pr-body.md")"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Báo kết quả về Telegram
+        if: ${{ always() }}
+        env:
+          OUTCOME: ${{ steps.claude.outcome }}
+          CHANGED: ${{ steps.pr.outputs.changed }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+          PR_OUTCOME: ${{ steps.pr.outcome }}
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          SUMMARY="$(node serverless/scripts/summarize.cjs "$EXEC_FILE" 1500 2>/dev/null || true)"
+          SHORT="$(printf '%s' "$TASK" | tr '\n\r' '  ' | cut -c1-100)"
+          if [ "$OUTCOME" != "success" ]; then
+            MSG="Việc “${SHORT}” bị lỗi trong lúc Claude làm. Xem log: ${RUN_URL}"
+          elif [ "$PR_OUTCOME" = "failure" ]; then
+            MSG="Claude làm xong “${SHORT}” nhưng không mở được Pull Request (kiểm tra Settings → Actions → General → cho phép tạo PR). Log: ${RUN_URL}"
+          elif [ "$CHANGED" = "true" ]; then
+            MSG="Xong: “${SHORT}”"$'\n'"Pull Request: ${PR_URL}"$'\n\n'"${SUMMARY}"
+          else
+            MSG="Xong “${SHORT}” nhưng Claude không đổi tệp nào."$'\n\n'"${SUMMARY}"
+          fi
+          MESSAGE="$MSG" node serverless/scripts/notify.cjs

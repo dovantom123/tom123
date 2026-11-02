@@ -1,0 +1,63 @@
+# Hỏi qua Telegram: Cloudflare Worker gửi sự kiện "telegram-hoi" → Claude đọc mã và trả lời → gửi câu trả lời về Telegram.
+# CHỈ ĐỌC: quyền contents: read, Claude chỉ có Read/Glob/Grep, không sửa gì và không đẩy gì.
+# Hướng dẫn cài: serverless/HUONG-DAN.md.
+name: Telegram - hỏi
+
+on:
+  repository_dispatch:
+    types: [telegram-hoi]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telegram-hoi
+  cancel-in-progress: false
+
+jobs:
+  hoi:
+    if: ${{ vars.OWNER_CHAT_ID != '' && github.event.client_payload.chat_id == vars.OWNER_CHAT_ID }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      CHAT_ID: ${{ github.event.client_payload.chat_id }}
+      TASK: ${{ github.event.client_payload.task }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Claude trả lời
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            Bạn đang chạy trong GitHub Actions, trả lời câu hỏi của chủ repo gửi qua Telegram. CHỈ ĐỌC: không sửa, không tạo, không xóa tệp nào.
+
+            CÂU HỎI:
+            ${{ github.event.client_payload.task }}
+
+            Trả lời bằng tiếng Việt, ngắn gọn, đúng trọng tâm, dẫn tên tệp khi cần. Nếu không tìm thấy thông tin trong mã thì nói rõ là không thấy, đừng bịa.
+          claude_args: |
+            --max-turns 15
+            --allowedTools "Read,Glob,Grep"
+
+      - name: Gửi câu trả lời về Telegram
+        if: ${{ always() }}
+        env:
+          OUTCOME: ${{ steps.claude.outcome }}
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          SHORT="$(printf '%s' "$TASK" | tr '\n\r' '  ' | cut -c1-100)"
+          if [ "$OUTCOME" != "success" ]; then
+            MSG="Câu hỏi “${SHORT}” bị lỗi. Xem log: ${RUN_URL}"
+          else
+            MSG="$(node serverless/scripts/summarize.cjs "$EXEC_FILE" 3300 2>/dev/null || true)"
+            [ -n "$MSG" ] || MSG="(Claude không để lại câu trả lời.) Log: ${RUN_URL}"
+          fi
+          MESSAGE="$MSG" node serverless/scripts/notify.cjs

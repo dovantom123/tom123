@@ -1,0 +1,15 @@
+# Dùng nếu bạn triển khai bằng dòng lệnh: npx wrangler deploy (đã chạy npx wrangler login). Bí mật đặt bằng: npx wrangler secret put <TÊN>.
+# Triển khai bằng giao diện web (dán mã vào Dashboard) thì không cần tệp này.
+name = "vpao-telegram"
+main = "src/index.mjs"
+compatibility_date = "2025-01-01"
+
+[vars]
+GITHUB_REPO = "chu/repo"       # đổi thành repo của bạn
+OWNER_CHAT_ID = "000000000"    # đổi thành chat id của bạn
+DAILY_CAP = "10"
+
+# Tạo KV: npx wrangler kv namespace create STATE  rồi dán id vào đây (bỏ dấu # ở 3 dòng dưới)
+# [[kv_namespaces]]
+# binding = "STATE"
+# id = "DÁN-ID-KV-VÀO-ĐÂY"
