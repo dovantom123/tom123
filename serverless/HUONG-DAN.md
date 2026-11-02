@@ -91,18 +91,20 @@ Tên menu của Cloudflare có thể đổi theo thời gian; nếu khác, gửi
 
 (Ai quen dòng lệnh có thể dùng `serverless/worker/wrangler.toml` với `npx wrangler deploy`.)
 
-## Bước 5. Trỏ bot Telegram về Worker
+## Bước 5. Trỏ bot Telegram về Worker (một lệnh, có hướng dẫn)
 
-Trong PowerShell, thư mục `tom123` (thay ba giá trị của bạn; token không nằm trong dòng lệnh mà ở biến môi trường):
+Trong PowerShell, thư mục `tom123` (đã `git pull`):
 
 ```powershell
-$env:TELEGRAM_BOT_TOKEN = "token-của-bot-mới"
-$env:WORKER_URL = "https://vpao-telegram.tên-bạn.workers.dev"
-$env:TELEGRAM_WEBHOOK_SECRET = "chuỗi-bí-mật-ở-bước-4"
-node serverless/scripts/set-webhook.cjs dat
-node serverless/scripts/set-webhook.cjs xem
+node serverless/scripts/ket-noi.cjs https://vpao-telegram.tên-bạn.workers.dev
 ```
-`xem` phải in địa chỉ webhook của bạn và `Tin đang chờ: 0`, không có dòng "Lỗi gần nhất". Đóng cửa sổ PowerShell hoặc chạy `Remove-Item Env:TELEGRAM_BOT_TOKEN` để token không nằm lại trong phiên.
+Lệnh tự đi qua 4 bước và hỏi bạn đúng chỗ cần:
+1. Kiểm tra Worker có chạy (trả `ok`).
+2. Tạo chuỗi bí mật webhook, **chép vào clipboard** để bạn dán vào Cloudflare (Worker → Settings → Variables and Secrets → `TELEGRAM_WEBHOOK_SECRET` → Ctrl+V → Deploy), rồi bạn nhấn Enter. Lệnh **kiểm tra Worker đã nhận đúng chuỗi chưa** trước khi đi tiếp, nếu lệch sẽ báo rõ và cho thử lại.
+3. Hỏi **token bot** bằng ô ẩn (chuột phải để dán), thử `getMe` để chắc token đúng và cho biết tên bot.
+4. Đặt webhook và đọc lại để xác nhận.
+
+Token và chuỗi bí mật **không bao giờ được in ra màn hình**, nên chụp ảnh kết quả cũng an toàn. (Nếu cửa sổ đã có sẵn biến `TELEGRAM_WEBHOOK_SECRET` khớp với Worker thì bước 2 dùng luôn nó.) Cách thủ công cũ, nếu cần: `node serverless/scripts/set-webhook.cjs dat` rồi `xem`.
 
 ## Bước 6. Thử
 

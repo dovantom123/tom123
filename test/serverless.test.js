@@ -154,3 +154,54 @@ test("check-api: nhận ra kiểu xác thực x-api-key / Bearer, báo lỗi d�
     r = await run({ MODEL: "m", ANTHROPIC_BASE_URL: "http://dai-ly.example" }); assert.equal(r.code, 1); assert.match(r.err, /https/);
   } finally { srv.close(); }
 });
+
+test("ket-noi: kiểm tra Worker, thử token, đặt webhook; bắt lỗi bí mật không khớp; không in token hay bí mật", async () => {
+  const http = require("node:http"), { spawn } = require("node:child_process"), { default: worker } = await W();
+  const TOKEN = "123456789:" + "A".repeat(35), SECRET = "bi-mat-webhook-thu-nghiem-0123456789";
+  const wenv = { TELEGRAM_WEBHOOK_SECRET: SECRET, OWNER_CHAT_ID: "42", TELEGRAM_BOT_TOKEN: TOKEN };
+  const wsrv = http.createServer((rq, rs) => { let b = ""; rq.on("data", (c) => (b += c)); rq.on("end", async () => {
+    const h = rq.headers["x-telegram-bot-api-secret-token"], r = await worker.fetch(new Request("http://w.test" + rq.url, { method: rq.method, headers: h ? { "X-Telegram-Bot-Api-Secret-Token": h } : {}, body: rq.method === "POST" ? b : undefined }), wenv, { waitUntil: () => {} });
+    rs.writeHead(r.status); rs.end(await r.text()); }); });
+  const calls = [];
+  const tsrv = http.createServer((rq, rs) => { let b = ""; rq.on("data", (c) => (b += c)); rq.on("end", () => {
+    const m = rq.url.split("/"), tok = m[1].replace(/^bot/, ""), method = m[2], body = JSON.parse(b || "{}"); calls.push({ method, body });
+    const send = (code, o) => { rs.writeHead(code, { "Content-Type": "application/json" }); rs.end(JSON.stringify(o)); };
+    if (tok !== TOKEN) return send(401, { ok: false, description: "Unauthorized" });
+    if (method === "getMe") return send(200, { ok: true, result: { username: "testbot" } });
+    if (method === "setWebhook") return send(200, { ok: true, result: true });
+    if (method === "getWebhookInfo") return send(200, { ok: true, result: { url: calls.find((c) => c.method === "setWebhook").body.url, pending_update_count: 0 } });
+    send(404, { ok: false, description: "no" }); }); });
+  await Promise.all([new Promise((ok) => wsrv.listen(0, "127.0.0.1", ok)), new Promise((ok) => tsrv.listen(0, "127.0.0.1", ok))]);
+  const wurl = `http://127.0.0.1:${wsrv.address().port}`, tapi = `http://127.0.0.1:${tsrv.address().port}`;
+  const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), "vpao-nobin-"));
+  const run = (args, env, feed) => new Promise((ok) => {
+    const p = spawn(process.execPath, [path.join(ROOT, "serverless/scripts/ket-noi.cjs"), ...args], { env: { PATH: emptyBin, VPAO_TELEGRAM_API: tapi, ...env } });
+    let o = "", e = ""; const onOut = (d) => { o += d; feed && feed(p, o); }; p.stdout.on("data", onOut); p.stderr.on("data", (d) => (e += d)); p.on("exit", (c) => ok({ code: c, out: o, err: e }));
+  });
+  try {
+    // 1) bí mật có sẵn trong biến, token đúng
+    calls.length = 0;
+    let r = await run([wurl], { TELEGRAM_WEBHOOK_SECRET: SECRET }, (p, o) => { if (/Dán TOKEN_BOT/.test(o) && !p.fed) { p.fed = 1; p.stdin.write(TOKEN + "\n"); } });
+    assert.equal(r.code, 0, r.out + r.err); assert.match(r.out, /Worker đang chạy/); assert.match(r.out, /Worker đã nhận ĐÚNG/); assert.match(r.out, /bot @testbot/); assert.match(r.out, /XONG/);
+    const sw = calls.find((c) => c.method === "setWebhook").body; assert.equal(sw.url, `${wurl}/telegram`); assert.equal(sw.secret_token, SECRET); assert.deepEqual(sw.allowed_updates, ["message"]);
+    assert.ok(!(r.out + r.err).includes(TOKEN) && !(r.out + r.err).includes(SECRET), "không in token hay bí mật");
+    // 2) bí mật không khớp → báo rõ, thoát bằng q, KHÔNG gọi setWebhook
+    calls.length = 0;
+    r = await run([wurl], { TELEGRAM_WEBHOOK_SECRET: "bi-mat-khac-hoan-toan-0123456789" }, (p, o) => { if (/gõ q/.test(o) && !p.fed) { p.fed = 1; p.stdin.write("q\n"); } });
+    assert.equal(r.code, 1); assert.match(r.out, /KHÁC chuỗi này/); assert.ok(!calls.some((c) => c.method === "setWebhook"));
+    // 3) tự tạo bí mật (không có clipboard → in ra), người dùng dán vào Worker rồi Enter, sau đó thành công
+    calls.length = 0; wenv.TELEGRAM_WEBHOOK_SECRET = "chua-doi-chua-doi-chua-doi-chua";
+    r = await run([wurl], {}, (p, o) => {
+      const m = o.match(/đừng chụp ảnh màn hình lúc này\):\s+([A-Za-z0-9_-]{32})/);
+      if (m && !p.s) { p.s = m[1]; wenv.TELEGRAM_WEBHOOK_SECRET = m[1]; p.stdin.write("\n"); }
+      if (/Dán TOKEN_BOT/.test(o) && !p.fed) { p.fed = 1; p.stdin.write(TOKEN + "\n"); } });
+    assert.equal(r.code, 0, r.out + r.err); assert.equal(calls.find((c) => c.method === "setWebhook").body.secret_token, wenv.TELEGRAM_WEBHOOK_SECRET);
+    // 4) token sai dạng, token bị Telegram từ chối, Worker không chạy
+    wenv.TELEGRAM_WEBHOOK_SECRET = SECRET;
+    r = await run([wurl], { TELEGRAM_WEBHOOK_SECRET: SECRET }, (p, o) => { if (/Dán TOKEN_BOT/.test(o) && !p.fed) { p.fed = 1; p.stdin.write("khong-phai-token\n"); } }); assert.equal(r.code, 1); assert.match(r.out, /không đúng dạng/);
+    const bad = "987654321:" + "B".repeat(35);
+    r = await run([wurl], { TELEGRAM_WEBHOOK_SECRET: SECRET }, (p, o) => { if (/Dán TOKEN_BOT/.test(o) && !p.fed) { p.fed = 1; p.stdin.write(bad + "\n"); } }); assert.equal(r.code, 1); assert.match(r.out, /Telegram không nhận token/); assert.ok(!(r.out + r.err).includes(bad));
+    r = await run(["http://127.0.0.1:9"], { TELEGRAM_WEBHOOK_SECRET: SECRET }); assert.equal(r.code, 1); assert.match(r.out, /Worker không trả "ok"/);
+    r = await run(["ftp://sai"], {}); assert.equal(r.code, 1); assert.match(r.out, /không hợp lệ/);
+  } finally { wsrv.close(); tsrv.close(); fs.rmSync(emptyBin, { recursive: true, force: true }); }
+});

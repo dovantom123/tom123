@@ -12,7 +12,7 @@ const files = [
   [".github/workflows/telegram-viec.yml", ".github/workflows/telegram-viec.yml"],
   [".github/workflows/telegram-hoi.yml", ".github/workflows/telegram-hoi.yml"],
   ["serverless/scripts/tg.cjs", "serverless/scripts/tg.cjs"], ["serverless/scripts/notify.cjs", "serverless/scripts/notify.cjs"],
-  ["serverless/scripts/summarize.cjs", "serverless/scripts/summarize.cjs"], ["serverless/scripts/set-webhook.cjs", "serverless/scripts/set-webhook.cjs"],
+  ["serverless/scripts/summarize.cjs", "serverless/scripts/summarize.cjs"], ["serverless/scripts/set-webhook.cjs", "serverless/scripts/set-webhook.cjs"], ["serverless/scripts/ket-noi.cjs", "serverless/scripts/ket-noi.cjs"],
   ["lib/mask.js", "serverless/scripts/lib-mask.js"],
 ];
 let copied = 0;
