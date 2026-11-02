@@ -8,7 +8,7 @@ Mỗi phiên là một nhân viên robot có bàn riêng:
 - bạn giao việc thì cả nhóm ra phòng họp;
 - ai đang giữ môi trường DEV thì đứng giữa Phòng DEV, ai đang chờ thì xếp hàng.
 
-> **Chỉ đọc, chạy tại máy bạn.** Văn phòng chỉ đọc nhật ký mà Claude Code và Codex vốn tự ghi (`~/.claude`, `~/.codex`) và sổ của đội trong thư mục `data/`. Nó không gửi dữ liệu đi đâu và không cần khóa API. Mọi chuỗi giống khóa đều được che trước khi hiện. Kho không dùng thư viện ngoài nào, nên không cần `npm install`.
+> **Chỉ đọc, chạy tại máy bạn.** Văn phòng chỉ đọc nhật ký mà Claude Code và Codex vốn tự ghi (`~/.claude`, `~/.codex`) và sổ của đội trong thư mục `data/`. Mặc định nó không gửi dữ liệu đi đâu và không cần khóa API (chỉ khi bạn tự bật cảnh báo Telegram thì mới có tin ngắn gửi tới Telegram, xem mục dưới). Mọi chuỗi giống khóa đều được che trước khi hiện. Kho không dùng thư viện ngoài nào, nên không cần `npm install`.
 >
 > Có thể cài thêm **hook Claude Code** (tùy chọn, xem mục dưới) để trạng thái "đang làm / chờ bạn duyệt / lỗi" chính xác thay vì đoán qua nhật ký. Hook chỉ gửi vài trường tối thiểu về chính máy bạn (127.0.0.1), không gửi nội dung lệnh hay tệp.
 
@@ -103,6 +103,38 @@ Rồi mở lại phiên Claude Code đang chạy và khởi động lại `npm s
 - Hộp xin quyền / hộp hỏi của Claude hiện ngay ở ô **Cần anh**, tắt khi bạn trả lời. Lượt lỗi API hiện là "bị chặn".
 - `hooks/emit.js` chỉ gửi tên sự kiện, mã phiên, tên tool, loại thông báo và thông báo ngắn tới `127.0.0.1`. Không gửi nội dung lệnh, đường dẫn tệp, kết quả tool. Máy chủ chỉ nhận khi gọi thẳng từ máy này kèm token trong `data/.hook-endpoint.json` (quyền 0600). Máy chủ chưa chạy hay lỗi gì thì hook im lặng thoát, không làm chậm hay chặn Claude.
 
+## Cảnh báo Telegram (tùy chọn, mặc định tắt)
+
+Không cần ngồi canh màn hình: khi có việc cần bạn, văn phòng nhắn Telegram. Đây là **chỗ duy nhất văn phòng gửi dữ liệu ra Internet** (tới `api.telegram.org`), và chỉ khi bạn tự điền token + chat id.
+
+Báo khi:
+- **Cần anh** chắc chắn (hộp xin quyền/hộp hỏi từ hook, sổ "Cần anh", tin gắn `[CẦN ANH]`). Mục chỉ đoán qua chữ thì không báo.
+- Phiên **bị chặn** quá `blockedAfterMin` phút (mặc định 3).
+- **Tiền AI hôm nay** qua 80% và chạm 100% trần `aiCapUsd`.
+- Sự cố hệ thống mức đỏ (ổ đĩa đầy, container DEV hỏng, tin hòm thư bị bỏ quên). Cùng sự cố không nhắc lại trong `cooldownMin` phút (mặc định 60).
+
+Cài đặt:
+1. Trên Telegram nhắn **@BotFather**, lệnh `/newbot`, lấy `botToken`.
+2. Mở bot vừa tạo, bấm Start (hoặc nhắn một câu), rồi chạy `node tools/alerts.js tim-chat` để lấy `chatId`.
+3. Thêm vào `config.json` (file này nằm trong `.gitignore`), hoặc dùng biến môi trường `VPAO_TELEGRAM_TOKEN` / `VPAO_TELEGRAM_CHAT`:
+
+```json
+"alerts": {
+  "telegram": { "botToken": "123456:ABC...", "chatId": "123456789" },
+  "dashboardUrl": "https://....trycloudflare.com",
+  "includeText": true,
+  "quiet": { "enabled": true, "start": "23:00", "end": "08:00", "days": [0,1,2,3,4,5,6] }
+}
+```
+
+4. `node tools/alerts.js thu` gửi tin thử, rồi khởi động lại `npm start`.
+
+Lưu ý:
+- **Quyền riêng tư:** tin chứa tên phiên và một đoạn ngắn (tối đa 200 ký tự, đã che khóa) của câu hỏi. Không muốn nội dung ra khỏi máy thì đặt `"includeText": false`: tin chỉ nói "X cần bạn".
+- **Giờ yên lặng** theo giờ máy này, qua nửa đêm được; alert bị giữ sẽ gộp thành một tin khi hết giờ. Chỉ "chạm trần tiền AI" vẫn gửi ngay.
+- Tối đa `maxPerHour` tin mỗi giờ (mặc định 20); vượt thì gom thành tin tóm tắt. Lần chạy đầu sau khi khởi động chỉ ghi nhận hiện trạng nên không báo lại việc cũ. Gửi lỗi thì thử lại sau 1 phút.
+- Token không bao giờ nằm trong log hay thông báo lỗi. Nếu máy phải qua proxy HTTP để ra Internet thì cần cấu hình riêng (Node không tự dùng `HTTPS_PROXY`).
+
 ## Bảo mật khi mở ra ngoài
 
 - Máy chủ mặc định chỉ nghe `127.0.0.1` và từ chối `Host` lạ (chống DNS rebinding) khi chưa có `accessKey`.
@@ -122,6 +154,7 @@ Rồi mở lại phiên Claude Code đang chạy và khởi động lại `npm s
 | `title`, `subtitle`, `ownerName` | Văn phòng AI, …, Giám đốc | Tên hiện trên văn phòng |
 | `projects` | `[]` | Thư mục dự án cần theo dõi (tính cả thư mục con, worktree). Để trống là mọi dự án |
 | `port`, `host` | 7788, 127.0.0.1 | `0.0.0.0` để máy khác trong mạng xem được (bắt buộc có `accessKey`) |
+| `alerts` | `{}` | Cảnh báo Telegram (xem mục trên). Để trống = tắt |
 | `allowOpenAccess` | `false` | `true` = cho phép mở ra mạng không khóa (không nên) |
 | `accessKey` | `""` | Khóa xem: nhập một lần ở form đăng nhập mới vào được |
 | `keepHours` | 24 | Phiên im quá số giờ này thì rời văn phòng |
@@ -147,9 +180,10 @@ Rồi mở lại phiên Claude Code đang chạy và khởi động lại `npm s
 ```
 server.js              máy chủ: tìm phiên, đọc nhật ký + sổ, đẩy trạng thái mỗi giây
 lib/                   perf (token, điểm, tiền) · docs (sổ sách) · hopthu · tongquan · chat (PIN) · mailbox · config
-                       mask (che khóa) · hookstate (trạng thái từ hook) · hookinstall · netguard (Host, giới hạn thử sai, token hook)
+                       mask (che khóa) · hookstate (trạng thái từ hook) · hookinstall · alerts (Telegram) · netguard (Host, giới hạn thử sai, token hook)
 tools/vp.js            công cụ ghi sổ cho agent
 tools/hooks.js         cài / gỡ / xem hook Claude Code
+tools/alerts.js        xem / tìm chat id / gửi tin thử cho cảnh báo Telegram
 hooks/emit.js          hook: rút gọn sự kiện rồi POST về máy chủ
 test/                  npm test (node --test, không cần thư viện)
 setup.js               cài đặt (hỏi–đáp hoặc --yes cho agent)

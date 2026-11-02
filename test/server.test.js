@@ -17,9 +17,9 @@ function setup(extra = {}) {
   fs.writeFileSync(cfg, JSON.stringify({ projects: [], claudeDir: claude, codexDir: path.join(dir, "codex"), dataDir: path.join(dir, "data"), ...extra }));
   return { dir, cfg };
 }
-function start(extra) {
+function start(extra, env = {}) {
   const { dir, cfg } = setup(extra);
-  const proc = spawn(process.execPath, [path.join(ROOT, "server.js")], { env: { ...process.env, VPAO_CONFIG: cfg, PORT: "0" }, stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(process.execPath, [path.join(ROOT, "server.js")], { env: { ...process.env, VPAO_CONFIG: cfg, PORT: "0", ...env }, stdio: ["ignore", "pipe", "pipe"] });
   let err = ""; proc.stderr.on("data", (d) => (err += d));
   const ep = path.join(dir, "data", ".hook-endpoint.json");
   const ready = new Promise((ok, bad) => {
@@ -132,4 +132,23 @@ test("hooks/emit.js: chỉ gửi trường cần thiết tới máy chủ, thoá
     srv.proc.kill(); await new Promise((ok) => srv.proc.on("exit", ok));
     const r2 = await run(JSON.stringify({ hook_event_name: "Stop", session_id: SID })); assert.equal(r2.code, 0);
   } finally { srv.stop(); }
+});
+
+test("cảnh báo Telegram: Cần anh từ hook được gửi tới Telegram (giả), không gửi việc có sẵn lúc khởi động", async () => {
+  const got = [];
+  const tg = http.createServer((rq, rs) => { let b = ""; rq.on("data", (c) => (b += c)); rq.on("end", () => { got.push({ url: rq.url, body: JSON.parse(b || "{}") }); rs.writeHead(200, { "Content-Type": "application/json" }); rs.end(JSON.stringify({ ok: true, result: {} })); }); });
+  await new Promise((ok) => tg.listen(0, "127.0.0.1", ok));
+  const srv = start({ alerts: { telegram: { botToken: "111:TESTTOKEN", chatId: "42" }, dashboardUrl: "http://localhost:7788" } },
+    { VPAO_TELEGRAM_API: `http://127.0.0.1:${tg.address().port}`, VPAO_ALERT_TICK_MS: "100" });
+  const s = await srv.ready;
+  try {
+    await new Promise((ok) => setTimeout(ok, 600)); // lượt đầu ghi nhận hiện trạng
+    assert.equal(got.length, 0);
+    await hook(s, { e: "PermissionRequest", x: { tool_name: "Bash" } });
+    const t0 = Date.now(); while (!got.length && Date.now() - t0 < 5000) await new Promise((ok) => setTimeout(ok, 50));
+    assert.equal(got.length, 1, "đúng một tin"); assert.equal(got[0].url, "/bot111:TESTTOKEN/sendMessage");
+    assert.equal(got[0].body.chat_id, "42"); assert.match(got[0].body.text, /Chờ bạn duyệt quyền: Bash/); assert.match(got[0].body.text, /http:\/\/localhost:7788$/);
+    await new Promise((ok) => setTimeout(ok, 500)); assert.equal(got.length, 1, "không báo lặp");
+    assert.ok(!srv.errText().includes("TESTTOKEN"));
+  } finally { srv.stop(); tg.close(); }
 });

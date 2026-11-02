@@ -8,6 +8,7 @@
     "start": "node server.js",
     "vp": "node tools/vp.js",
     "hooks": "node tools/hooks.js",
+    "alerts": "node tools/alerts.js",
     "test": "node --test"
   },
   "engines": {

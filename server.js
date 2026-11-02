@@ -1,7 +1,7 @@
 // Văn phòng ảo 3D cho đội AI (Claude Code + Codex).
 // Máy chủ CHỈ ĐỌC: nhật ký phiên có sẵn trên máy (~/.claude, ~/.codex) và sổ điều phối của đội trong thư mục data/
 // (việc ưu tiên, gói việc, hòm thư, lượt DEV, cần anh, nội quy…; ghi bằng công cụ tools/vp.js). Mỗi giây đẩy trạng thái lên trình duyệt.
-// Không gửi dữ liệu ra ngoài, không sửa file nào của Claude/Codex, che mọi chuỗi giống khóa trước khi hiện.
+// Mặc định không gửi dữ liệu ra ngoài (trừ cảnh báo Telegram tùy chọn, lib/alerts.js), không sửa file nào của Claude/Codex, che mọi chuỗi giống khóa trước khi hiện.
 "use strict";
 const http = require("http");
 const fs = require("fs");
@@ -18,6 +18,7 @@ const { loadConfig } = require("./lib/config");
 const M = require("./lib/mask");
 const net = require("./lib/netguard");
 const { createHookState } = require("./lib/hookstate");
+const alertsLib = require("./lib/alerts");
 
 const ROOT = __dirname;
 const CFG = loadConfig(ROOT);
@@ -621,6 +622,10 @@ if (OPEN_BIND && !CFG.allowOpenAccess) {
   console.error(`\n  Từ chối chạy: host = "${CFG.host}" mở văn phòng cho cả mạng mà chưa có accessKey.\n  Ai trong mạng cũng sẽ đọc được hội thoại các phiên AI. Hãy đặt accessKey trong config.json (npm run setup),\n  hoặc đổi host về "127.0.0.1". Muốn cố tình mở không khóa thì đặt "allowOpenAccess": true.\n`);
   process.exit(1);
 }
+// Cảnh báo Telegram (tùy chọn, mặc định tắt): cấu hình ở config.json mục "alerts" hoặc biến môi trường VPAO_TELEGRAM_TOKEN / VPAO_TELEGRAM_CHAT.
+const alerter = alertsLib.create({ cfg: CFG.alerts, title: CFG.title, mask, log: (m) => console.error("  " + m) });
+if (alerter.enabled) setInterval(() => { alerter.tick(snapshot()).catch(() => {}); }, Number(process.env.VPAO_ALERT_TICK_MS) || 5000);
+
 const server = http.createServer((req, res) => {
   res.setHeader("X-Content-Type-Options", "nosniff"); res.setHeader("Referrer-Policy", "no-referrer"); res.setHeader("X-Frame-Options", "SAMEORIGIN");
   const url = new URL(req.url, "http://x");
@@ -658,6 +663,7 @@ server.listen(PORT, CFG.host, () => {
   console.log(`  Sổ điều phối:     ${DATA}`);
   console.log(`  Khóa xem:         ${KEY ? "đang bật" : "tắt (chỉ máy này xem được nếu host = 127.0.0.1)"}`);
   console.log(`  Hook Claude Code: nhận ở /hook (cài bằng: node tools/hooks.js cai)`);
+  console.log(`  Cảnh báo:         ${alerter.enabled ? "Telegram đang bật" + (alerter.cfg.quiet.enabled ? " (có giờ yên lặng)" : "") : "tắt (đặt alerts.telegram trong config.json để bật)"}`);
   if (OPEN_BIND) console.log("  (!) Đang mở không khóa theo allowOpenAccess: cả mạng đọc được hội thoại các phiên AI.");
   console.log("");
 });
