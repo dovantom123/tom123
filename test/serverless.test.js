@@ -121,3 +121,29 @@ test("workflow: có chặn chủ, quyền tối thiểu, và hoi chỉ đọc", 
   assert.doesNotMatch(viec, /Bash\(git/, "Claude không được tự chạy git");
   for (const y of [viec, hoi]) assert.match(y, /ANTHROPIC_BASE_URL: \$\{\{ vars\.ANTHROPIC_BASE_URL \|\| 'https:\/\/api\.anthropic\.com' \}\}/, "mặc định địa chỉ chính thức");
 });
+
+test("check-api: nhận ra kiểu xác thực x-api-key / Bearer, báo lỗi dễ hiểu, không bao giờ in khóa", async () => {
+  const http = require("node:http"), KEY = "KHOA-BI-MAT-12345";
+  const srv = http.createServer((req, res) => {
+    let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => {
+      const j = JSON.parse(b || "{}"), mode = srv.mode, okX = req.headers["x-api-key"] === KEY, okB = req.headers.authorization === `Bearer ${KEY}`;
+      const send = (code, o) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(o)); };
+      if (req.url !== "/v1/messages") return send(404, { error: { message: "không có đường dẫn" } });
+      if (j.model !== "model-dung") return send(400, { error: { message: `model ${j.model} không tồn tại ${KEY}` } });
+      if ((mode === "x" && okX) || (mode === "bearer" && okB)) return send(200, { model: j.model, content: [{ type: "text", text: "ok" }], usage: { input_tokens: 9, output_tokens: 1 } });
+      send(401, { error: { message: "sai khóa" } });
+    });
+  });
+  await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const run = (env) => new Promise((ok) => { const p = require("node:child_process").spawn(process.execPath, [path.join(ROOT, "serverless/scripts/check-api.cjs")], { env: { PATH: process.env.PATH, ANTHROPIC_BASE_URL: base, ANTHROPIC_API_KEY: KEY, ...env } }); let o = "", e = ""; p.stdout.on("data", (d) => (o += d)); p.stderr.on("data", (d) => (e += d)); p.on("exit", (c) => ok({ code: c, out: o, err: e })); });
+  try {
+    srv.mode = "x"; let r = await run({ MODEL: "model-dung" }); assert.equal(r.code, 0); assert.match(r.out, /THÀNH CÔNG với kiểu xác thực: x-api-key/); assert.match(r.out, /ANTHROPIC_API_KEY/);
+    srv.mode = "bearer"; r = await run({ MODEL: "model-dung" }); assert.equal(r.code, 0); assert.match(r.out, /kiểu xác thực: Authorization: Bearer/); assert.match(r.out, /ANTHROPIC_AUTH_TOKEN/);
+    srv.mode = "x"; r = await run({ MODEL: "model-dung", ANTHROPIC_API_KEY: "khoa-sai" }); assert.equal(r.code, 1); assert.match(r.err, /HTTP 401/); assert.match(r.err, /khóa sai/);
+    r = await run({ MODEL: "model-la" }); assert.equal(r.code, 1); assert.match(r.err, /HTTP 400/); assert.match(r.err, /tên mô hình/); assert.ok(!(r.out + r.err).includes(KEY), "khóa bị che dù máy chủ phản hồi lại khóa");
+    r = await run({ MODEL: "model-dung", ANTHROPIC_BASE_URL: base + "/sai-duong-dan/v9" }); assert.equal(r.code, 1); assert.match(r.err, /HTTP 404/);
+    assert.equal((await run({ MODEL: "" })).code, 1); assert.equal((await run({ MODEL: "m", ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "" })).code, 1);
+    r = await run({ MODEL: "m", ANTHROPIC_BASE_URL: "http://dai-ly.example" }); assert.equal(r.code, 1); assert.match(r.err, /https/);
+  } finally { srv.close(); }
+});

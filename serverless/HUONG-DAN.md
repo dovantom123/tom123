@@ -119,6 +119,26 @@ Nếu khóa của bạn mua từ một đại lý thay vì từ Anthropic, workf
 
 Điều kiện để chạy được: đại lý phải có đường dẫn tương thích định dạng API của Anthropic (Messages API) và hỗ trợ đúng tên mô hình mà Claude Code gọi. Nếu họ dùng tên mô hình khác, báo tôi để chỉnh thêm `--model`.
 
+### Thử khóa của đại lý trên máy bạn trước khi đặt lên GitHub
+
+Script này gửi một yêu cầu nhỏ (vài token) để biết khóa có chạy không và đại lý dùng kiểu xác thực nào. Khóa chỉ nằm trong biến môi trường của cửa sổ PowerShell và không bao giờ được in ra:
+
+```powershell
+cd C:\Users\DELL\tom123
+git pull
+$env:ANTHROPIC_API_KEY = "khóa-của-bạn"
+$env:ANTHROPIC_BASE_URL = "địa-chỉ-API-trên-trang-đại-lý"     # ví dụ https://xxx.com  (có hoặc không có /v1 đều được)
+$env:MODEL = "tên-mô-hình-đúng-như-trang-đại-lý-ghi"
+node serverless/scripts/check-api.cjs
+Remove-Item Env:ANTHROPIC_API_KEY
+```
+Kết quả:
+- **THÀNH CÔNG với kiểu xác thực: x-api-key**: đặt khóa vào secret `ANTHROPIC_API_KEY`, địa chỉ vào biến `ANTHROPIC_BASE_URL`. Xong.
+- **THÀNH CÔNG … Bearer**: đại lý dùng kiểu Bearer, workflow cần chỉnh thêm (báo tôi, kèm kết quả).
+- **HTTP 404**: đại lý không có đường dẫn `/v1/messages`, tức là không tương thích API Anthropic, nên Claude Code không dùng được khóa này.
+- **HTTP 400**: thường sai tên mô hình.
+- **HTTP 401 / 403**: khóa sai, hết hạn mức, hoặc bị từ chối.
+
 **Rủi ro cần nhắc, nhất là với đại lý bán "khóa rẻ":**
 - **Toàn bộ mã và câu lệnh của bạn đi qua máy chủ của họ.** Họ đọc, lưu được mọi thứ Claude đọc trong repo. Chỉ dùng với repo **không chứa bí mật hay mã nhạy cảm**.
 - **Nguồn khóa không rõ.** Khóa giá rẻ có thể đến từ tài khoản dùng chung hoặc tài khoản bị lạm dụng, có thể bị thu hồi bất cứ lúc nào, và dùng như vậy có thể vi phạm điều khoản của Anthropic. Tôi không đánh giá được riêng đại lý bạn đang dùng, bạn tự cân nhắc.
