@@ -1,0 +1,19 @@
+# Cloudflare Tunnel cho văn phòng: tên miền riêng https -> 127.0.0.1:7788, không mở cổng nào trên VPS. Cài ở deploy/HUONG-DAN-VPS.md, bước 11.
+# __USER__ = tên user Linux, __CLOUDFLARED__ = đường dẫn cloudflared (lệnh: command -v cloudflared).
+[Unit]
+Description=Cloudflare Tunnel cho van phong ao
+After=network-online.target vpao.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+# Token tunnel nằm ở đây (chmod 600) để không hiện trong "ps". Cloudflared tự đọc biến TUNNEL_TOKEN.
+EnvironmentFile=/home/__USER__/.cloudflared.env
+ExecStart=__CLOUDFLARED__ --no-autoupdate tunnel run
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

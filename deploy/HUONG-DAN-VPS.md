@@ -184,6 +184,70 @@ Trong chat với bot Telegram:
 3. Nếu phiên đang rảnh và đã bật `tmuxDelivery`: bot trả lời "Đã gõ việc vào phiên ... (tmux %N)" và bạn thấy Claude làm ngay trong `tmux attach`. Nếu không: "Đã xếp hàng", việc được giao khi phiên chạy lượt tiếp theo.
 4. Xong lượt, bot báo cáo.
 
+## Bước 11 (tùy chọn). Xem văn phòng bằng tên miền riêng qua Cloudflare Tunnel
+
+Thay cho đường hầm SSH ở bước 9: bạn mở `https://office.tên-miền-của-bạn.com` ở bất cứ đâu (điện thoại, máy khác). VPS **vẫn không mở cổng nào**: chương trình `cloudflared` trên VPS tự kết nối ra Cloudflare, Cloudflare chuyển yêu cầu về văn phòng. Tôi **không có quyền vào tài khoản Cloudflare của bạn**, nên các bước bấm trên web bạn tự làm.
+
+**Cần có:** một tài khoản Cloudflare (miễn phí) và **một tên miền đã thêm vào Cloudflare** (đổi nameserver theo hướng dẫn của Cloudflare). Chưa có tên miền thì dùng đường hầm SSH ở bước 9, hoặc đường hầm nhanh `trycloudflare.com` của `scripts/xem-tren-dien-thoai.sh` (địa chỉ đổi mỗi lần chạy).
+
+### 11a. Đặt khóa xem cho văn phòng (bắt buộc)
+Văn phòng cho thấy hội thoại của các phiên AI nên **phải có khóa** trước khi mở ra Internet. Khi chưa có khóa, văn phòng từ chối mọi yêu cầu đến từ tên miền lạ.
+
+```bash
+cd ~/vanphong
+node setup.js --yes --key "$(openssl rand -base64 18 | tr -d '/+=')"
+sudo systemctl restart vpao
+```
+Lệnh in ra khóa (một chuỗi ngẫu nhiên). **Ghi lại khóa này**, nó giữ nguyên các cấu hình khác trong `config.json` (Telegram, tmux…).
+
+### 11b. Tạo tunnel trên Cloudflare (làm trên web)
+1. Vào **Cloudflare → Zero Trust** (tên menu có thể đổi theo thời gian; đường dẫn hiện nay là *Networks → Tunnels*). Lần đầu Cloudflare yêu cầu chọn gói (gói Free) và có thể đòi nhập thẻ để xác minh.
+2. **Create a tunnel** → loại **Cloudflared** → đặt tên `vpao`.
+3. Chọn hệ điều hành **Debian/Ubuntu** (và đúng kiểu CPU của VPS: `uname -m` in `x86_64` là 64-bit/amd64, `aarch64` là arm64). Trang hiện các lệnh cài; **ta không dùng lệnh `cloudflared service install <token>` họ hiển thị**, mà chỉ **sao chép token** (chuỗi rất dài sau chữ `install` hoặc `--token`).
+4. Tab **Public hostname** (hoặc *Published application routes*) → **Add**: Subdomain `office`, Domain chọn tên miền của bạn, **Service type `HTTP`, URL `127.0.0.1:7788`**. Lưu.
+
+### 11c. Cài cloudflared trên VPS và chạy như dịch vụ
+Cài chương trình (chọn đúng kiểu CPU; amd64 cho `x86_64`, arm64 cho `aarch64`):
+
+```bash
+cd /tmp
+curl -L -o cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i cloudflared.deb
+cloudflared --version
+```
+Lưu token (dán token vào chỗ dấu `...`), rồi bật dịch vụ:
+
+```bash
+cd ~/vanphong
+cp deploy/cloudflared.env.example ~/.cloudflared.env && chmod 600 ~/.cloudflared.env
+nano ~/.cloudflared.env        # điền: TUNNEL_TOKEN=...
+sed -e "s|__USER__|agent|g" -e "s|__CLOUDFLARED__|$(command -v cloudflared)|g" deploy/cloudflared.service | sudo tee /etc/systemd/system/cloudflared-vpao.service >/dev/null
+sudo systemctl daemon-reload && sudo systemctl enable --now cloudflared-vpao
+sudo systemctl status cloudflared-vpao --no-pager      # phải thấy "active (running)"
+journalctl -u cloudflared-vpao -n 20 --no-pager         # tìm dòng "Registered tunnel connection"
+```
+Trên trang Cloudflare, tunnel `vpao` phải chuyển sang **Healthy**. Mở `https://office.tên-miền-của-bạn.com`, nhập khóa ở bước 11a.
+
+### 11d. Thêm lớp bảo vệ Cloudflare Access (rất nên làm)
+Khóa xem là lớp thứ hai. Lớp thứ nhất nên là **Cloudflare Access**: chỉ email của bạn mới thấy được trang đăng nhập.
+1. **Zero Trust → Access → Applications → Add an application → Self-hosted.**
+2. Application domain: `office.tên-miền-của-bạn.com`.
+3. **Policy**: Action *Allow*, Include → *Emails* → email của bạn. Lưu.
+
+Từ đó người lạ chỉ thấy trang đăng nhập Cloudflare, không chạm được tới văn phòng.
+
+### Điều văn phòng vẫn giữ an toàn khi đi qua tunnel
+Tôi đã có test kiểm tra: qua tunnel thì yêu cầu mang dấu của Cloudflare nên
+- `/hook` (cổng nhận sự kiện từ Claude) **bị từ chối** dù có token: chỉ nhận từ chính VPS;
+- nhắn tin cho agent từ trang web cần **PIN 6 số**, và PIN **không bao giờ hiện qua tunnel**. PIN chỉ đọc được trên VPS: `cat ~/.van-phong-ao/pin.txt` (qua SSH);
+- cookie đăng nhập có thêm `Secure`, `HttpOnly`, `SameSite=Strict`; sai khóa 5 lần thì bị khóa 10 phút.
+
+### Gỡ tunnel khi không dùng
+```bash
+sudo systemctl disable --now cloudflared-vpao
+```
+Rồi xóa tunnel và public hostname trên trang Cloudflare, và **thu hồi token** ở đó nếu nghi bị lộ.
+
 ---
 
 ## Giao việc cho phiên đang rảnh (tmux): chọn bật hay không
@@ -207,6 +271,7 @@ sudo systemctl restart vpao
 - [ ] `ufw` chỉ mở SSH. Không mở cổng 7788.
 - [ ] `~/.vpao.env` chmod 600; không đưa lên GitHub.
 - [ ] Telegram bật xác thực hai bước.
+- [ ] Nếu dùng Cloudflare Tunnel: đã đặt khóa xem (11a) và bật Cloudflare Access chỉ cho email của bạn (11d).
 - [ ] Không để khóa quan trọng (khóa cloud, khóa thanh toán…) trên VPS mà agent đọc được, đặc biệt nếu dùng `--dangerously-skip-permissions`.
 - [ ] Đặt `aiCapUsd` để được báo khi tiền AI hôm nay vượt 80%.
 
@@ -220,4 +285,6 @@ sudo systemctl restart vpao
 | `/viec` nói "chưa có hook" | Phiên được mở **trước khi** cài hook. Thoát phiên Claude rồi mở lại. |
 | Bot nói "Đã xếp hàng" thay vì "Đã gõ việc" | `tmuxDelivery` chưa bật, Claude không chạy trong tmux, hoặc phiên đang làm/chờ duyệt. Xem log `journalctl -u vpao` dòng `tmux:`. |
 | Phiên đứng yên không làm gì | Có thể đang chờ hộp xin quyền. `tmux attach -t agents` để xem; xem bước 8 về cách khai báo trước các quyền. |
+| Mở tên miền ra lỗi 502/1033 | Tunnel chưa chạy hoặc `vpao` đang tắt. `systemctl status vpao cloudflared-vpao`, và kiểm tra Service là `HTTP` + `127.0.0.1:7788` ở trang Cloudflare. |
+| Mở tên miền báo "Host không hợp lệ" | Chưa đặt khóa xem (11a): khi chưa có khóa, văn phòng từ chối tên miền lạ. Đặt khóa rồi `sudo systemctl restart vpao`. |
 | `claude: command not found` trong tmux | Thiếu PATH. Thêm `export PATH=$HOME/.npm-global/bin:$PATH` vào `~/.bashrc` rồi mở lại tmux. |

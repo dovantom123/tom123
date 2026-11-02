@@ -164,7 +164,7 @@ Khi đã bật cảnh báo Telegram (mục trên), bot còn **nhận lệnh từ
 
 ## Chạy 24/7 trên máy chủ đám mây (VPS)
 
-Muốn máy tính tắt mà vẫn giao việc và nhận báo cáo qua Telegram thì chạy **cả Claude Code lẫn văn phòng trên cùng một VPS** (văn phòng đọc nhật ký trên máy nó chạy). Hướng dẫn từng bước, kèm file systemd và script tmux: [deploy/HUONG-DAN-VPS.md](deploy/HUONG-DAN-VPS.md).
+Muốn máy tính tắt mà vẫn giao việc và nhận báo cáo qua Telegram thì chạy **cả Claude Code lẫn văn phòng trên cùng một VPS** (văn phòng đọc nhật ký trên máy nó chạy). Hướng dẫn từng bước, kèm file systemd và script tmux: [deploy/HUONG-DAN-VPS.md](deploy/HUONG-DAN-VPS.md). Muốn xem văn phòng bằng tên miền riêng https, bước 11 của hướng dẫn đó dùng **Cloudflare Tunnel** (không mở cổng) + Cloudflare Access.
 
 Trên VPS, phiên Claude chạy trong tmux và hay ở trạng thái rảnh, nên có tùy chọn `"alerts": {"tmuxDelivery": true}`: văn phòng **gõ việc từ Telegram vào phiên đang rảnh** (không qua shell, chỉ khi phiên đã xong ít nhất một lượt, không bao giờ gõ khi phiên đang làm hoặc chờ duyệt quyền). Mặc định tắt.
 
@@ -217,7 +217,7 @@ lib/                   tgbot (nhận lệnh Telegram) · commandq (hàng đợi 
 tools/vp.js            công cụ ghi sổ cho agent
 tools/hooks.js         cài / gỡ / xem hook Claude Code
 tools/alerts.js        xem / tìm chat id / gửi tin thử cho cảnh báo Telegram
-deploy/                hướng dẫn và file cho VPS: systemd, tmux, mẫu biến môi trường
+deploy/                hướng dẫn và file cho VPS: systemd, tmux, Cloudflare Tunnel, mẫu biến môi trường
 hooks/emit.js          hook: rút gọn sự kiện rồi POST về máy chủ (và nhận việc giao từ xa)
 test/                  npm test (node --test, không cần thư viện)
 setup.js               cài đặt (hỏi–đáp hoặc --yes cho agent)

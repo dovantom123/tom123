@@ -275,3 +275,21 @@ test("tmuxDelivery tắt (mặc định): phiên rảnh không bao giờ bị g�
     assert.match(tg.texts()[0], /đang rảnh\. Việc sẽ được giao/); assert.ok(!fs.existsSync(log), "không gọi tmux");
   } finally { srv.stop(); tg.srv.close(); fs.rmSync(bin, { recursive: true, force: true }); }
 });
+
+test("qua Cloudflare Tunnel (tên miền riêng, https): đăng nhập được, cookie Secure, nhưng /hook và PIN nhắn tin vẫn bị chặn", async () => {
+  const srv = start({ accessKey: "khoa-tunnel-123" }); const s = await srv.ready;
+  const cf = { Host: "office.example.com", "Cf-Ray": "abc123-SIN", "Cf-Connecting-Ip": "203.0.113.7", "X-Forwarded-Proto": "https" };
+  try {
+    assert.equal((await req(s.port, "GET", "/state", { headers: cf })).status, 401, "chưa đăng nhập");
+    const ok = await req(s.port, "POST", "/login", { headers: cf, body: "key=khoa-tunnel-123" });
+    assert.equal(ok.status, 303); const cookie = String(ok.headers["set-cookie"]); assert.match(cookie, /; Secure/); assert.match(cookie, /HttpOnly/);
+    const authed = { ...cf, Cookie: cookie.split(";")[0] };
+    assert.equal((await req(s.port, "GET", "/state", { headers: authed })).status, 200);
+    // đã đăng nhập vẫn không được gọi /hook (chỉ máy này + token) và không được nhắn tin cho agent nếu thiếu PIN
+    assert.equal((await req(s.port, "POST", "/hook", { headers: { ...authed, "X-VP-Token": s.token, "Content-Type": "application/json" }, body: JSON.stringify({ session_id: SID, hook_event_name: "Stop" }) })).status, 401);
+    const st = JSON.parse((await req(s.port, "GET", "/chat/status", { headers: authed })).body);
+    assert.equal(st.local, false); assert.equal(st.authorized, false); assert.ok(!("pin" in st), "PIN không bao giờ lộ qua tunnel");
+    const send = await req(s.port, "POST", "/chat/send", { headers: { ...authed, "Content-Type": "application/json" }, body: JSON.stringify({ to: KEY8, text: "x" }) });
+    assert.equal(send.status, 401);
+  } finally { srv.stop(); }
+});
