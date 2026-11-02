@@ -2,7 +2,8 @@
 // Hook của Claude Code → văn phòng. Claude Code đưa JSON sự kiện qua stdin; script này rút ra vài trường
 // cần thiết (KHÔNG gửi nội dung lệnh, đường dẫn tệp hay kết quả tool) rồi POST tới máy chủ văn phòng
 // trên 127.0.0.1 kèm token. Không bao giờ chặn Claude: mọi lỗi (máy chủ chưa chạy, JSON lạ…) đều thoát 0 trong im lặng
-// và không in gì ra stdout (stdout của một số hook được đưa vào ngữ cảnh của Claude).
+// và không in gì ra stdout, trừ đúng một trường hợp: máy chủ báo có việc giao từ xa cho phiên này (Telegram), khi đó in JSON
+// quyết định để Claude làm tiếp (Stop) hoặc dừng (PreToolUse). stdout của hook được đưa vào ngữ cảnh của Claude nên không in gì khác.
 "use strict";
 const path = require("path");
 const http = require("http");
@@ -32,7 +33,18 @@ function send(raw) {
   const body = JSON.stringify(slim(payload));
   const req = http.request({ host: "127.0.0.1", port: ep.port, path: "/hook", method: "POST", timeout: 1500,
     headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), "X-VP-Token": ep.token } },
-  (res) => { res.resume(); res.on("end", () => process.exit(0)); });
+  (res) => {
+    let b = ""; res.setEncoding("utf8"); res.on("data", (c) => { if (b.length < 20000) b += c; });
+    res.on("end", () => {
+      // Việc giao từ xa (Telegram): máy chủ chỉ trả JSON khi có việc đang chờ phiên NÀY. Đây là lần duy nhất script in ra stdout.
+      try {
+        const d = res.statusCode === 200 && JSON.parse(b).deliver;
+        if (d && d.kind === "stop-block" && typeof d.text === "string") process.stdout.write(JSON.stringify({ decision: "block", reason: d.text }));
+        else if (d && d.kind === "pretool-deny" && typeof d.text === "string") process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: d.text } }));
+      } catch {}
+      process.exit(0);
+    });
+  });
   req.on("error", () => process.exit(0));
   req.on("timeout", () => { req.destroy(); process.exit(0); });
   req.end(body);

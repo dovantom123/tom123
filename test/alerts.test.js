@@ -105,3 +105,28 @@ test("telegram: gọi đúng API, lỗi không chứa token", async () => {
     await assert.rejects(alerts.telegramCall("123:ABC", "x", {}, { base: "http://127.0.0.1:1" }), (e) => !e.message.includes("123:ABC"));
   } finally { srv.close(); }
 });
+
+test("báo xong lượt: một lần cho mỗi lượt, có khoảng nghỉ, includeText=false thì không kèm nội dung", async () => {
+  const agent = (done, text = "đã sửa xong lỗi đăng nhập") => snap({ agents: [{ key: "c-1", name: "Kỹ sư A", flag: null, lastDoneAt: done, lastText: text }] });
+  const h = harness(cfgOn({ reportGapSec: 120 })); await h.tick(agent(1000));
+  assert.equal(await h.tick(agent(1000)), 0, "lượt có sẵn lúc khởi động không báo");
+  assert.equal(await h.tick(agent(2000)), 1); assert.match(h.sent[0], /Kỹ sư A xong lượt: đã sửa xong lỗi đăng nhập/);
+  assert.equal(await h.tick(agent(2000)), 0, "không báo lặp");
+  h.add(30000); assert.equal(await h.tick(agent(3000)), 0, "trong khoảng nghỉ");
+  h.add(121000); assert.equal(await h.tick(agent(4000)), 1);
+  const off = harness(cfgOn({ includeText: false, reportGapSec: 0 })); await off.tick(agent(1));
+  await off.tick(agent(2)); assert.match(off.sent[0], /Kỹ sư A xong lượt$/);
+  const none = harness(cfgOn({ reportDone: false })); await none.tick(agent(1)); assert.equal(await none.tick(agent(2)), 0);
+});
+test("nhớ tin cảnh báo nào nói về phiên nào để trả lời giao việc đúng người", async () => {
+  let id = 100; const sent = [];
+  const a = alerts.create({ cfg: cfgOn(), title: "VP", send: async (t) => { sent.push(t); return { message_id: ++id }; } });
+  await a.tick(snap()); await a.tick(snap({ asks: [ask({ who: "c-1" })] }));
+  assert.equal(a.agentForMessage(101), "c-1"); assert.equal(a.agentForMessage(999), null);
+  const r = await a.notify("Đã giao việc", "c-1"); assert.equal(a.agentForMessage(r.message_id), "c-1");
+});
+test("normalize: allowedUserIds chỉ nhận số, inbound/reportDone mặc định bật", () => {
+  const n = alerts.normalize({ telegram: { botToken: "t", chatId: "1", allowedUserIds: [5, "-100", "x", "9 9"] } });
+  assert.deepEqual(n.allowedUserIds, ["5", "-100"]); assert.equal(n.inbound, true); assert.equal(n.reportDone, true);
+  assert.equal(alerts.normalize({ inbound: false, reportDone: false }).inbound, false);
+});

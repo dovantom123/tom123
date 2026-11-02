@@ -16,6 +16,7 @@ const cmd = process.argv[2] || "xem";
   if (cmd === "xem") {
     console.log(`Telegram: ${a.enabled ? "ĐÃ cấu hình (botToken + chatId)" : "chưa cấu hình"}${a.token && !a.chat ? " — có token, thiếu chatId (chạy: node tools/alerts.js tim-chat)" : ""}`);
     console.log(`Giờ yên lặng: ${a.quiet.enabled ? `${Math.floor(a.quiet.start / 60)}:${String(a.quiet.start % 60).padStart(2, "0")} → ${Math.floor(a.quiet.end / 60)}:${String(a.quiet.end % 60).padStart(2, "0")}` : "tắt"} · gửi nội dung: ${a.includeText ? "có" : "không"} · tối đa ${a.maxPerHour} tin/giờ`);
+    console.log(`Nhận lệnh từ Telegram: ${a.inbound ? "bật" : "tắt"}${a.inbound && a.enabled ? ` (chỉ từ chat ${a.chat}${a.allowedUserIds.length ? ", người được phép " + a.allowedUserIds.join(",") : ""})` : ""} · báo xong lượt: ${a.reportDone ? "bật" : "tắt"} · việc giao hết hạn sau ${a.taskTtlMin} phút`);
   } else if (cmd === "tim-chat") {
     if (!a.token) { console.error("Chưa có botToken. Tạo bot với @BotFather, đặt vào config.json (alerts.telegram.botToken) hoặc biến VPAO_TELEGRAM_TOKEN."); process.exit(1); }
     const chats = await alerts.findChats(a.token);

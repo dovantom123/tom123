@@ -134,21 +134,108 @@ test("hooks/emit.js: chỉ gửi trường cần thiết tới máy chủ, thoá
   } finally { srv.stop(); }
 });
 
+// Telegram giả: ghi lại sendMessage, phát lại các update đã xếp hàng cho getUpdates (offset -1 = lấy update cuối).
+function fakeTelegram() {
+  const sent = [], updates = []; let nextId = 1000;
+  const srv = http.createServer((rq, rs) => { let b = ""; rq.on("data", (c) => (b += c)); rq.on("end", () => {
+    const body = JSON.parse(b || "{}"), method = rq.url.split("/").pop(); let result = {};
+    if (method === "sendMessage") { const m = { message_id: nextId++, ...body }; sent.push(m); result = { message_id: m.message_id }; }
+    else if (method === "getUpdates") result = body.offset === -1 ? updates.slice(-1) : updates.filter((u) => u.update_id >= (body.offset || 0));
+    rs.writeHead(200, { "Content-Type": "application/json" }); rs.end(JSON.stringify({ ok: true, result })); }); });
+  const say = (text, extra = {}, chat = 42) => updates.push({ update_id: updates.length + 1, message: { message_id: 500 + updates.length, date: Math.floor(Date.now() / 1000), chat: { id: chat, type: "private" }, from: { id: chat }, text, ...extra } });
+  return { srv, sent, say, listen: () => new Promise((ok) => srv.listen(0, "127.0.0.1", () => ok(`http://127.0.0.1:${srv.address().port}`))), texts: () => sent.map((m) => m.text) };
+}
+const until = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await new Promise((ok) => setTimeout(ok, 50)); } return fn(); };
+const TG = (base) => ({ alerts: { telegram: { botToken: "111:TESTTOKEN", chatId: "42" }, dashboardUrl: "http://localhost:7788", reportGapSec: 0 } });
+const TGENV = (base) => ({ VPAO_TELEGRAM_API: base, VPAO_ALERT_TICK_MS: "100", VPAO_TG_POLL_MS: "50" });
+
 test("cảnh báo Telegram: Cần anh từ hook được gửi tới Telegram (giả), không gửi việc có sẵn lúc khởi động", async () => {
-  const got = [];
-  const tg = http.createServer((rq, rs) => { let b = ""; rq.on("data", (c) => (b += c)); rq.on("end", () => { got.push({ url: rq.url, body: JSON.parse(b || "{}") }); rs.writeHead(200, { "Content-Type": "application/json" }); rs.end(JSON.stringify({ ok: true, result: {} })); }); });
-  await new Promise((ok) => tg.listen(0, "127.0.0.1", ok));
-  const srv = start({ alerts: { telegram: { botToken: "111:TESTTOKEN", chatId: "42" }, dashboardUrl: "http://localhost:7788" } },
-    { VPAO_TELEGRAM_API: `http://127.0.0.1:${tg.address().port}`, VPAO_ALERT_TICK_MS: "100" });
-  const s = await srv.ready;
+  const tg = fakeTelegram(), base = await tg.listen();
+  const srv = start(TG(base), TGENV(base)); const s = await srv.ready;
   try {
     await new Promise((ok) => setTimeout(ok, 600)); // lượt đầu ghi nhận hiện trạng
-    assert.equal(got.length, 0);
+    assert.equal(tg.sent.length, 0);
     await hook(s, { e: "PermissionRequest", x: { tool_name: "Bash" } });
-    const t0 = Date.now(); while (!got.length && Date.now() - t0 < 5000) await new Promise((ok) => setTimeout(ok, 50));
-    assert.equal(got.length, 1, "đúng một tin"); assert.equal(got[0].url, "/bot111:TESTTOKEN/sendMessage");
-    assert.equal(got[0].body.chat_id, "42"); assert.match(got[0].body.text, /Chờ bạn duyệt quyền: Bash/); assert.match(got[0].body.text, /http:\/\/localhost:7788$/);
-    await new Promise((ok) => setTimeout(ok, 500)); assert.equal(got.length, 1, "không báo lặp");
+    await until(() => tg.sent.length);
+    assert.equal(tg.sent.length, 1, "đúng một tin"); assert.equal(tg.sent[0].chat_id, "42");
+    assert.match(tg.sent[0].text, /Chờ bạn duyệt quyền: Bash/); assert.match(tg.sent[0].text, /http:\/\/localhost:7788$/);
+    await new Promise((ok) => setTimeout(ok, 500)); assert.equal(tg.sent.length, 1, "không báo lặp");
     assert.ok(!srv.errText().includes("TESTTOKEN"));
-  } finally { srv.stop(); tg.close(); }
+  } finally { srv.stop(); tg.srv.close(); }
+});
+test("Telegram hai chiều: /ds, giao việc qua hook (Stop → block), báo xong lượt, trả lời vào tin cảnh báo", async () => {
+  const tg = fakeTelegram(), base = await tg.listen();
+  const srv = start(TG(base), TGENV(base)); const s = await srv.ready;
+  try {
+    await new Promise((ok) => setTimeout(ok, 600));
+    tg.say("/ds"); await until(() => tg.sent.length >= 1);
+    assert.match(tg.texts()[0], /1\. c-?.*Claude|1\. .*\(Claude/, "danh sách có phiên Claude");
+    // chưa có hook → hòm thư, nói rõ giới hạn
+    tg.say("/viec 1 việc qua hòm thư"); await until(() => tg.sent.length >= 2);
+    assert.match(tg.texts()[1], /hòm thư/); assert.match(tg.texts()[1], /chưa có hook/);
+    // có hook → xếp hàng, giao khi Stop, đúng một lần
+    await hook(s, { e: "UserPromptSubmit" });
+    tg.say("/viec 1 sửa lỗi đăng nhập"); await until(() => tg.sent.length >= 3);
+    assert.match(tg.texts()[2], /Đã xếp hàng/);
+    const r1 = await hook(s, { e: "Stop" });
+    assert.equal(r1.status, 200); const d = JSON.parse(r1.body).deliver;
+    assert.equal(d.kind, "stop-block"); assert.match(d.text, /^\[Việc từ Mr\. Dang qua Telegram\] sửa lỗi đăng nhập$|^\[Việc từ .* qua Telegram\] sửa lỗi đăng nhập$/);
+    assert.equal((await hook(s, { e: "Stop" })).status, 204, "giao một lần thôi");
+    await until(() => tg.texts().some((x) => /Đã giao việc cho/.test(x)));
+    // /dung → PreToolUse bị chặn
+    tg.say("/dung 1"); await until(() => tg.texts().some((x) => /Sẽ chặn lệnh tiếp theo/.test(x)));
+    const r2 = await hook(s, { e: "PreToolUse", x: { tool_name: "Bash" } });
+    assert.equal(r2.status, 200); assert.equal(JSON.parse(r2.body).deliver.kind, "pretool-deny");
+    // báo xong lượt sau khi Stop
+    await until(() => tg.texts().some((x) => /xong lượt/.test(x)));
+    assert.ok(tg.texts().some((x) => /xong lượt/.test(x)), "có báo xong lượt");
+    // trả lời vào một tin cảnh báo → giao đúng phiên
+    await hook(s, { e: "PermissionRequest", x: { tool_name: "Bash" } });
+    const alertMsg = await until(() => tg.sent.find((m) => /Chờ bạn duyệt quyền/.test(m.text)));
+    assert.ok(alertMsg, "có tin cảnh báo");
+    await hook(s, { e: "PostToolUse", x: { tool_name: "Bash" } });
+    tg.say("làm tiếp phần B", { reply_to_message: { message_id: alertMsg.message_id } });
+    await until(() => tg.texts().some((x) => /Đã xếp hàng/.test(x) && tg.texts().indexOf(x) > 4));
+    const r3 = await hook(s, { e: "Stop" }); assert.equal(r3.status, 200); assert.match(JSON.parse(r3.body).deliver.text, /làm tiếp phần B$/);
+  } finally { srv.stop(); tg.srv.close(); }
+});
+test("Telegram: người lạ, tin chuyển tiếp và tin cũ không bao giờ được thi hành", async () => {
+  const tg = fakeTelegram(), base = await tg.listen();
+  const srv = start(TG(base), TGENV(base)); const s = await srv.ready;
+  try {
+    await new Promise((ok) => setTimeout(ok, 600));
+    await hook(s, { e: "UserPromptSubmit" });
+    tg.say("/viec 1 lệnh của người lạ", {}, 999);
+    tg.say("/viec 1 tin chuyển tiếp", { forward_date: 1 });
+    tg.say("/viec 1 tin cũ", { date: Math.floor(Date.now() / 1000) - 3600 });
+    await new Promise((ok) => setTimeout(ok, 800));
+    assert.ok(!tg.sent.some((m) => String(m.chat_id) === "999"), "không trả lời người lạ");
+    assert.ok(tg.texts().some((x) => /chuyển tiếp/.test(x)));
+    assert.equal((await hook(s, { e: "Stop" })).status, 204, "không có việc nào được xếp hàng");
+  } finally { srv.stop(); tg.srv.close(); }
+});
+test("Telegram: tin tồn đọng lúc văn phòng tắt không được thi hành khi khởi động", async () => {
+  const tg = fakeTelegram(), base = await tg.listen();
+  tg.say("/viec 1 gửi lúc văn phòng đang tắt");
+  const srv = start(TG(base), TGENV(base)); const s = await srv.ready;
+  try {
+    await new Promise((ok) => setTimeout(ok, 800));
+    await hook(s, { e: "UserPromptSubmit" });
+    assert.equal(tg.sent.length, 0, "không trả lời tin cũ"); assert.equal((await hook(s, { e: "Stop" })).status, 204);
+  } finally { srv.stop(); tg.srv.close(); }
+});
+test("hooks/emit.js: in quyết định block ra stdout khi máy chủ có việc giao từ xa, nếu không thì im lặng", async () => {
+  const tg = fakeTelegram(), base = await tg.listen();
+  const srv = start(TG(base), TGENV(base)); const s = await srv.ready;
+  try {
+    await new Promise((ok) => setTimeout(ok, 500));
+    const cfg = path.join(srv.dir, "config.json");
+    const run = (obj) => new Promise((ok) => { const p = spawn(process.execPath, [path.join(ROOT, "hooks", "emit.js")], { env: { ...process.env, VPAO_CONFIG: cfg }, stdio: ["pipe", "pipe", "pipe"] }); let out = ""; p.stdout.on("data", (d) => (out += d)); p.on("exit", (c) => ok({ code: c, out })); p.stdin.end(JSON.stringify({ session_id: SID, ...obj })); });
+    await run({ hook_event_name: "UserPromptSubmit" });
+    tg.say("/viec 1 làm việc X"); await until(() => tg.sent.length >= 1);
+    const quiet = await run({ hook_event_name: "PostToolUse", tool_name: "Bash" }); assert.equal(quiet.out, "");
+    const r = await run({ hook_event_name: "Stop" });
+    assert.equal(r.code, 0); assert.deepEqual(Object.keys(JSON.parse(r.out)), ["decision", "reason"]); assert.equal(JSON.parse(r.out).decision, "block"); assert.match(JSON.parse(r.out).reason, /làm việc X$/);
+    assert.equal((await run({ hook_event_name: "Stop" })).out, "");
+  } finally { srv.stop(); tg.srv.close(); }
 });

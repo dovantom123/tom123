@@ -135,6 +135,33 @@ Lưu ý:
 - Tối đa `maxPerHour` tin mỗi giờ (mặc định 20); vượt thì gom thành tin tóm tắt. Lần chạy đầu sau khi khởi động chỉ ghi nhận hiện trạng nên không báo lại việc cũ. Gửi lỗi thì thử lại sau 1 phút.
 - Token không bao giờ nằm trong log hay thông báo lỗi. Nếu máy phải qua proxy HTTP để ra Internet thì cần cấu hình riêng (Node không tự dùng `HTTPS_PROXY`).
 
+## Giao việc và báo cáo qua Telegram
+
+Khi đã bật cảnh báo Telegram (mục trên), bot còn **nhận lệnh từ bạn**. Văn phòng tự hỏi Telegram liên tục (long polling) nên không cần mở cổng ra Internet.
+
+| Gõ trong chat với bot | Làm gì |
+|---|---|
+| `/ds` | Danh sách người đang có mặt, đánh số, kèm trạng thái |
+| `/viec 2 sửa lỗi đăng nhập` | Giao việc cho người số 2 trong `/ds` |
+| `/viec Tên người: nội dung` hoặc `Tên người: nội dung` | Giao theo tên (không phân biệt dấu, hoa thường) |
+| **Trả lời thẳng vào một tin cảnh báo** | Gửi cho đúng người mà tin đó nói về |
+| `/dung 2` | Chặn lệnh tiếp theo của người số 2 và bảo họ dừng |
+| `/baocao` | Mỗi người đang làm gì, xong lượt lúc nào, nói gì lần cuối |
+| `/cananh` | Việc đang chờ bạn quyết |
+
+**Việc tới agent bằng cách nào (và giới hạn thật):**
+- **Claude Code có hook:** việc được xếp hàng và giao khi hook `Stop` của phiên chạy (lúc phiên sắp nghỉ), Claude làm tiếp ngay theo việc mới. Không cần sửa `CLAUDE.md`. Phiên **đang rảnh hẳn** chỉ nhận việc ở lượt kế tiếp, tức là sau khi bạn gõ gì đó vào phiên đó. Việc **hết hạn** sau `taskTtlMin` phút (mặc định 30) và bot báo lại, để việc cũ không bất ngờ chạy hàng giờ sau.
+- **Codex hoặc phiên chưa có hook:** việc vào hòm thư. Agent chỉ thấy khi chạy `vp tiep` nên cần luật đội trong `AGENTS.md`/`CLAUDE.md`.
+- Bot **không bao giờ khởi chạy phiên mới** hay chạy lệnh trên máy bạn. Nó chỉ chuyển việc cho phiên có sẵn.
+
+**Báo cáo:** mỗi khi một phiên xong lượt, bot gửi tên người đó và vài dòng cuối câu trả lời (đã che khóa, tối đa 300 ký tự; `includeText:false` thì chỉ báo "xong lượt"). Cùng một người không báo dày hơn `reportGapSec` giây (mặc định 120), và có giờ yên lặng, trần `maxPerHour` như các cảnh báo khác. Tắt bằng `"reportDone": false`.
+
+**An toàn (đây là cửa điều khiển vào máy bạn):**
+- Chỉ nhận tin từ đúng `chatId`. Người lạ nhắn bot sẽ bị bỏ qua, không trả lời. Chat nhóm: phải đặt `alerts.telegram.allowedUserIds` (danh sách id người được phép), nếu không mọi lệnh bị bỏ.
+- Tin tồn đọng lúc văn phòng tắt, tin quá 2 phút và tin chuyển tiếp **không bao giờ được thi hành**. Tối đa `20` lệnh mỗi phút, mỗi tin tối đa 2000 ký tự.
+- Tắt hẳn phần nhận lệnh bằng `"inbound": false` (vẫn nhận cảnh báo).
+- Chưa làm: nút Cho phép / Từ chối quyền ngay trong Telegram (duyệt nhầm lệnh nguy hiểm từ điện thoại là rủi ro lớn).
+
 ## Bảo mật khi mở ra ngoài
 
 - Máy chủ mặc định chỉ nghe `127.0.0.1` và từ chối `Host` lạ (chống DNS rebinding) khi chưa có `accessKey`.
@@ -154,7 +181,7 @@ Lưu ý:
 | `title`, `subtitle`, `ownerName` | Văn phòng AI, …, Giám đốc | Tên hiện trên văn phòng |
 | `projects` | `[]` | Thư mục dự án cần theo dõi (tính cả thư mục con, worktree). Để trống là mọi dự án |
 | `port`, `host` | 7788, 127.0.0.1 | `0.0.0.0` để máy khác trong mạng xem được (bắt buộc có `accessKey`) |
-| `alerts` | `{}` | Cảnh báo Telegram (xem mục trên). Để trống = tắt |
+| `alerts` | `{}` | Cảnh báo và lệnh Telegram (xem hai mục trên). Để trống = tắt. Khóa con: `telegram.{botToken,chatId,allowedUserIds}`, `includeText`, `quiet`, `reportDone`, `reportGapSec`, `inbound`, `taskTtlMin`, `maxPerHour`, `blockedAfterMin`, `cooldownMin`, `dashboardUrl` |
 | `allowOpenAccess` | `false` | `true` = cho phép mở ra mạng không khóa (không nên) |
 | `accessKey` | `""` | Khóa xem: nhập một lần ở form đăng nhập mới vào được |
 | `keepHours` | 24 | Phiên im quá số giờ này thì rời văn phòng |
@@ -179,7 +206,7 @@ Lưu ý:
 
 ```
 server.js              máy chủ: tìm phiên, đọc nhật ký + sổ, đẩy trạng thái mỗi giây
-lib/                   perf (token, điểm, tiền) · docs (sổ sách) · hopthu · tongquan · chat (PIN) · mailbox · config
+lib/                   tgbot (nhận lệnh Telegram) · commandq (hàng đợi việc giao từ xa) · perf (token, điểm, tiền) · docs (sổ sách) · hopthu · tongquan · chat (PIN) · mailbox · config
                        mask (che khóa) · hookstate (trạng thái từ hook) · hookinstall · alerts (Telegram) · netguard (Host, giới hạn thử sai, token hook)
 tools/vp.js            công cụ ghi sổ cho agent
 tools/hooks.js         cài / gỡ / xem hook Claude Code

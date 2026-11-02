@@ -19,6 +19,9 @@ const M = require("./lib/mask");
 const net = require("./lib/netguard");
 const { createHookState } = require("./lib/hookstate");
 const alertsLib = require("./lib/alerts");
+const { createCommandQueue } = require("./lib/commandq");
+const tgbot = require("./lib/tgbot");
+const mailbox = require("./lib/mailbox");
 
 const ROOT = __dirname;
 const CFG = loadConfig(ROOT);
@@ -491,6 +494,7 @@ function snapshot() {
     if (h && h.phase === "error" && !flag) flag = "blocked";
     const L = !a.ceo && live.get(a.id);
     return { key: a.key, name: a.name, role: a.role, platform: a.platform, room: a.room, where, status, flag, session: a.ceo ? null : a.id.slice(0, 8), host: L && L.host ? L.host.slice(0, 8) : null,
+      lastDoneAt: a.ceo ? 0 : Math.max(h ? h.doneAt : 0, a.done.length ? a.done[a.done.length - 1].t : 0),
       nguon: a.ceo ? null : h ? "hook" : "nhat-ky", hook: h ? { phase: h.phase, since: h.since, text: h.text, tool: h.tool, subagents: h.subagents } : null,
       lastText: lt, lastTextAt: a.ceo ? a.ceoLastAt : a.lastTextAt, queuePos: qi >= 0 ? qi + 1 : null, lastActive: a.ceo ? a.ceoLastAt : a.mtime, sub: a.subActive || 0,
       hasJournal: !!(a.file || a.ceo), isNew: !a.ceo && t - a.createdAt < 3600000, createdAt: a.ceo ? null : a.createdAt, hist: Array.from({ length: 60 }, (_, i) => (a.mins.has(nowMin - 59 + i) ? 1 : 0)) };
@@ -604,7 +608,14 @@ async function hookRoute(req, res) {
   if (req.method !== "POST") return end(405);
   if (!net.isDirectLocal(req) || !hookToken.v || !net.safeEqual(req.headers["x-vp-token"], hookToken.v)) return end(401);
   let ev; try { ev = JSON.parse(await readBody(req, 20000)); } catch { return end(400); }
-  end(hooks.ingest(ev) ? 204 : 422);
+  const ok = hooks.ingest(ev); if (!ok) return end(422);
+  // Việc giao từ xa (Telegram): giao qua chính hook của phiên đó. Stop → Claude làm tiếp theo việc mới; PreToolUse → chặn lệnh kế tiếp và bảo dừng.
+  const want = ev.hook_event_name === "Stop" ? "message" : ev.hook_event_name === "PreToolUse" ? "stop" : null;
+  const cmd = want ? cmdq.take(ok.sid, want) : null;
+  if (!cmd) return end(204);
+  tgNotify(cmd.type === "stop" ? `Đã chặn lệnh tiếp theo của ${cmd.name} và bảo dừng.` : `Đã giao việc cho ${cmd.name}: ${clip(mask(cmd.text), 120)}`, cmd.agentKey);
+  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  res.end(JSON.stringify({ deliver: { kind: cmd.type === "stop" ? "pretool-deny" : "stop-block", text: cmd.type === "stop" ? `${CFG.ownerName} yêu cầu DỪNG qua Telegram. Dừng chạy tool, kết thúc lượt này và chờ chỉ thị tiếp.` : cmd.text } }));
 }
 async function loginRoute(req, res) {
   const who = clientId(req), page = (code, msg) => { res.writeHead(code, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }); res.end(loginPage(msg)); };
@@ -624,7 +635,42 @@ if (OPEN_BIND && !CFG.allowOpenAccess) {
 }
 // Cảnh báo Telegram (tùy chọn, mặc định tắt): cấu hình ở config.json mục "alerts" hoặc biến môi trường VPAO_TELEGRAM_TOKEN / VPAO_TELEGRAM_CHAT.
 const alerter = alertsLib.create({ cfg: CFG.alerts, title: CFG.title, mask, log: (m) => console.error("  " + m) });
-if (alerter.enabled) setInterval(() => { alerter.tick(snapshot()).catch(() => {}); }, Number(process.env.VPAO_ALERT_TICK_MS) || 5000);
+const cmdq = createCommandQueue({ ttlMs: alerter.cfg.taskTtlMin * 60000 });
+const tgNotify = (text, who) => { if (alerter.enabled) alerter.notify(text, who).catch(() => {}); };
+
+// Giao việc từ Telegram: chỉ chuyển cho phiên CÓ SẴN. Claude Code có hook → xếp hàng, giao khi phiên xong lượt (hết hạn nếu quá lâu).
+// Codex hoặc phiên chưa có hook → hòm thư (agent chỉ thấy khi chạy `vp tiep`, cần luật đội trong AGENTS.md / CLAUDE.md).
+async function giaoViec(agentKey, text) {
+  const a = byKey[agentKey]; if (!a || a.ceo) return { ok: false, msg: "Không thấy người này trong văn phòng." };
+  const body = String(text || "").slice(0, 2000), ttl = alerter.cfg.taskTtlMin, t = now();
+  pushEvent({ t, kind: "ceo", from: "ceo", to: a.key, title: clip(mask(body), 110), body: clip(mask(body), 700) });
+  const h = a.platform === "claude" ? hooks.view(a.id, t) : null;
+  if (h && h.phase !== "ended") {
+    const r = cmdq.push(a.id, { type: "message", text: `[Việc từ ${CFG.ownerName} qua Telegram] ${body}`, name: a.name, agentKey: a.key });
+    if (!r.ok) return { ok: false, msg: `Không xếp được: ${r.error}.` };
+    return { ok: true, msg: h.phase === "working" ? `Đã xếp hàng cho ${a.name}. Sẽ giao khi phiên xong lượt này (hết hạn sau ${ttl} phút).` : `${a.name} đang rảnh. Việc sẽ được giao khi phiên chạy lượt tiếp theo, tức là sau khi bạn gõ gì đó vào phiên đó (hết hạn sau ${ttl} phút).` };
+  }
+  try { mailbox.append(DATA, a.name, { su_kien: "tin", id: mailbox.newId(), tu: CFG.ownerName, toi: a.name, to_key: a.key, kenh: "telegram", tin: body }); }
+  catch (e) { return { ok: false, msg: `Không ghi được hòm thư: ${e.message}` }; }
+  return { ok: true, msg: `Đã bỏ vào hòm thư của ${a.name}. Agent chỉ thấy khi nó chạy "vp tiep" (cần luật đội trong CLAUDE.md/AGENTS.md); phiên này chưa có hook nên không giao thẳng được.` };
+}
+async function dungViec(agentKey) {
+  const a = byKey[agentKey]; if (!a || a.ceo) return { ok: false, msg: "Không thấy người này trong văn phòng." };
+  const h = a.platform === "claude" ? hooks.view(a.id) : null;
+  if (!h || h.phase === "ended") return { ok: false, msg: `Không dừng từ xa được ${a.name}: phiên này chưa có hook Claude Code.` };
+  const r = cmdq.push(a.id, { type: "stop", text: "", name: a.name, agentKey: a.key });
+  return r.ok ? { ok: true, msg: `Sẽ chặn lệnh tiếp theo của ${a.name} và bảo dừng (hết hạn sau ${alerter.cfg.taskTtlMin} phút).` } : { ok: false, msg: `Không xếp được: ${r.error}.` };
+}
+const botView = () => snapshot().agents.filter((x) => x.key !== "ceo").map((x) => ({ key: x.key, name: x.name, platform: x.platform, status: x.status, flag: x.flag, lastText: x.lastText, lastDoneAt: x.lastDoneAt }));
+let bot = null;
+if (alerter.enabled) {
+  setInterval(() => { alerter.tick(snapshot()).catch(() => {}); }, Number(process.env.VPAO_ALERT_TICK_MS) || 5000);
+  setInterval(() => { for (const c of cmdq.sweep()) tgNotify(`Việc cho ${c.name} hết hạn, chưa giao được (${c.type === "stop" ? "lệnh dừng" : clip(c.text.replace(/^\[[^\]]*\]\s*/, ""), 80)}). Gửi lại khi phiên đang chạy, hoặc gõ thẳng vào phiên.`); }, 30000);
+  if (alerter.cfg.inbound) {
+    bot = tgbot.create({ cfg: { chat: alerter.cfg.chat, allowedUserIds: alerter.cfg.allowedUserIds }, call: alerter.call, pollMs: Number(process.env.VPAO_TG_POLL_MS) || 800, log: (m) => console.error("  " + m),
+      ctx: { agents: botView, asks: () => snapshot().asks, giao: giaoViec, dung: dungViec, agentForReply: alerter.agentForMessage } });
+  }
+}
 
 const server = http.createServer((req, res) => {
   res.setHeader("X-Content-Type-Options", "nosniff"); res.setHeader("Referrer-Policy", "no-referrer"); res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -663,7 +709,8 @@ server.listen(PORT, CFG.host, () => {
   console.log(`  Sổ điều phối:     ${DATA}`);
   console.log(`  Khóa xem:         ${KEY ? "đang bật" : "tắt (chỉ máy này xem được nếu host = 127.0.0.1)"}`);
   console.log(`  Hook Claude Code: nhận ở /hook (cài bằng: node tools/hooks.js cai)`);
-  console.log(`  Cảnh báo:         ${alerter.enabled ? "Telegram đang bật" + (alerter.cfg.quiet.enabled ? " (có giờ yên lặng)" : "") : "tắt (đặt alerts.telegram trong config.json để bật)"}`);
+  console.log(`  Cảnh báo:         ${alerter.enabled ? "Telegram đang bật" + (alerter.cfg.quiet.enabled ? " (có giờ yên lặng)" : "") + (bot ? ", nhận lệnh từ chat " + alerter.cfg.chat : "") : "tắt (đặt alerts.telegram trong config.json để bật)"}`);
+  if (bot) bot.start();
   if (OPEN_BIND) console.log("  (!) Đang mở không khóa theo allowOpenAccess: cả mạng đọc được hội thoại các phiên AI.");
   console.log("");
 });

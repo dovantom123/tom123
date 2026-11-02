@@ -81,7 +81,7 @@ Chủ muốn gỡ: `node tools/hooks.js go`. Sau khi cài, phiên Claude Code đ
 
 ## 4c. Cảnh báo Telegram (tùy chọn, hỏi chủ trước)
 
-Chỉ làm khi chủ muốn. Việc này **gửi tin ra Internet** (tới Telegram) nên phải hỏi, và chủ tự tạo bot ở @BotFather. **Không in `botToken` ra tin nhắn nhóm, commit hay tệp công khai**; chủ dán vào `config.json` (mục `alerts.telegram`) hoặc biến môi trường `VPAO_TELEGRAM_TOKEN` / `VPAO_TELEGRAM_CHAT`. Rồi `node tools/alerts.js tim-chat`, `node tools/alerts.js thu` và khởi động lại máy chủ. Hỏi chủ có muốn `"includeText": false` (tin không chứa nội dung câu hỏi) và giờ yên lặng không.
+Chỉ làm khi chủ muốn. Việc này **gửi tin ra Internet** (tới Telegram) nên phải hỏi, và chủ tự tạo bot ở @BotFather. **Không in `botToken` ra tin nhắn nhóm, commit hay tệp công khai**; chủ dán vào `config.json` (mục `alerts.telegram`) hoặc biến môi trường `VPAO_TELEGRAM_TOKEN` / `VPAO_TELEGRAM_CHAT`. Rồi `node tools/alerts.js tim-chat`, `node tools/alerts.js thu` và khởi động lại máy chủ. Bot cũng **nhận lệnh giao việc từ chủ** (`/ds`, `/viec`, `/baocao`): chỉ từ đúng `chatId`; nếu chat là nhóm thì hỏi chủ id người được phép và điền `allowedUserIds`. Không tự khởi chạy phiên mới. Hỏi chủ có muốn `"includeText": false` (tin không chứa nội dung câu hỏi) và giờ yên lặng không.
 
 ## 5. Đưa luật đội vào dự án (hỏi chủ trước)
 
