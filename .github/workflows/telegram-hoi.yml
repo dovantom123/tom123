@@ -31,6 +31,9 @@ jobs:
       - name: Claude trả lời
         id: claude
         uses: anthropics/claude-code-action@v1
+        env:
+          # Mặc định là địa chỉ chính thức của Anthropic. Dùng nhà cung cấp API khác thì đặt biến ANTHROPIC_BASE_URL ở GitHub (Settings → Variables).
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL || 'https://api.anthropic.com' }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

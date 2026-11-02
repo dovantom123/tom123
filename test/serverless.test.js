@@ -119,4 +119,5 @@ test("workflow: có chặn chủ, quyền tối thiểu, và hoi chỉ đọc", 
   assert.match(hoi, /contents: read/); assert.doesNotMatch(hoi, /contents: write|pull-requests: write/); assert.match(hoi, /--allowedTools "Read,Glob,Grep"/);
   assert.match(viec, /git reset -q -- \.github\/workflows/); assert.doesNotMatch(viec, /git push[^\n]*\bmain\b/);
   assert.doesNotMatch(viec, /Bash\(git/, "Claude không được tự chạy git");
+  for (const y of [viec, hoi]) assert.match(y, /ANTHROPIC_BASE_URL: \$\{\{ vars\.ANTHROPIC_BASE_URL \|\| 'https:\/\/api\.anthropic\.com' \}\}/, "mặc định địa chỉ chính thức");
 });

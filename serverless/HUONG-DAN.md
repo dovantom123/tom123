@@ -113,6 +113,18 @@ Trong chat với **bot mới**:
 
 Xem chi tiết từng lần chạy: repo → tab **Actions**.
 
+## Dùng nhà cung cấp API khác (đại lý bán khóa)
+
+Nếu khóa của bạn mua từ một đại lý thay vì từ Anthropic, workflow cần biết **địa chỉ API** của đại lý. Thêm biến `ANTHROPIC_BASE_URL` ở GitHub (Settings → Secrets and variables → Actions → **Variables**) với địa chỉ do đại lý cung cấp, và để khóa của họ vào secret `ANTHROPIC_API_KEY`. Không đặt biến này thì workflow dùng địa chỉ chính thức của Anthropic.
+
+Điều kiện để chạy được: đại lý phải có đường dẫn tương thích định dạng API của Anthropic (Messages API) và hỗ trợ đúng tên mô hình mà Claude Code gọi. Nếu họ dùng tên mô hình khác, báo tôi để chỉnh thêm `--model`.
+
+**Rủi ro cần nhắc, nhất là với đại lý bán "khóa rẻ":**
+- **Toàn bộ mã và câu lệnh của bạn đi qua máy chủ của họ.** Họ đọc, lưu được mọi thứ Claude đọc trong repo. Chỉ dùng với repo **không chứa bí mật hay mã nhạy cảm**.
+- **Nguồn khóa không rõ.** Khóa giá rẻ có thể đến từ tài khoản dùng chung hoặc tài khoản bị lạm dụng, có thể bị thu hồi bất cứ lúc nào, và dùng như vậy có thể vi phạm điều khoản của Anthropic. Tôi không đánh giá được riêng đại lý bạn đang dùng, bạn tự cân nhắc.
+- Đừng đưa khóa vào tin nhắn, ảnh chụp màn hình hay commit. Nếu lỡ lộ thì đổi khóa ngay ở đại lý.
+- Trước hết hãy thử với `/hoi` trên một repo không quan trọng, và chỉ nạp số tiền nhỏ.
+
 ## Chi phí và giới hạn
 
 - **Tiền Claude:** tính vào khóa bạn đặt ở bước 1. Mỗi `/viec` dùng đến 30 lượt, nên đặt hạn mức chi tiêu ở trang Anthropic nếu bạn dùng khóa API.
