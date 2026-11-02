@@ -1,0 +1,10 @@
+# cấu hình riêng của từng máy (có thể chứa khóa xem) — KHÔNG đưa lên GitHub
+config.json
+config.json.bak
+node_modules/
+*.log
+*.pid
+.cloudflared/
+
+# sổ điều phối của từng đội (việc, hòm thư, lượt DEV…) — dữ liệu riêng, không đưa lên GitHub
+data/

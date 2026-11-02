@@ -1,0 +1,15 @@
+{
+  "title": "Văn phòng AI",
+  "subtitle": "Công ty AI · trực tiếp",
+  "ownerName": "Giám đốc",
+  "port": 7788,
+  "host": "127.0.0.1",
+  "projects": ["C:/Users/ban/Documents/du-an-cua-ban"],
+  "keepHours": 24,
+  "accessKey": "",
+  "staff": [
+    { "match": "quản lý", "role": "Quản lý dự án", "room": "lead" },
+    { "match": "019e544d", "name": "Kỹ sư Backend", "role": "Code API" }
+  ],
+  "hide": []
+}
