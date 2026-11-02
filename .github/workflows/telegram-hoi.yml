@@ -34,6 +34,8 @@ jobs:
         env:
           # Mặc định là địa chỉ chính thức của Anthropic. Dùng nhà cung cấp API khác thì đặt biến ANTHROPIC_BASE_URL ở GitHub (Settings → Variables).
           ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL || 'https://api.anthropic.com' }}
+          # Mô hình nhỏ Claude Code dùng cho việc phụ. Đại lý API thường không có đúng tên mặc định, nên đặt tên có thật ở biến CLAUDE_SMALL_MODEL nếu cần.
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.CLAUDE_SMALL_MODEL || 'claude-haiku-4-5-20251001' }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -47,6 +49,7 @@ jobs:
             Trả lời bằng tiếng Việt, ngắn gọn, đúng trọng tâm, dẫn tên tệp khi cần. Nếu không tìm thấy thông tin trong mã thì nói rõ là không thấy, đừng bịa.
           claude_args: |
             --max-turns 15
+            ${{ vars.CLAUDE_MODEL && format('--model {0}', vars.CLAUDE_MODEL) || '' }}
             --allowedTools "Read,Glob,Grep"
 
       - name: Gửi câu trả lời về Telegram

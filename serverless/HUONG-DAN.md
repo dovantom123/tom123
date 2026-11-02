@@ -140,6 +140,19 @@ Kết quả:
 - **HTTP 503 "No available channel for model …"**: khóa dùng được nhưng nhóm kênh của khóa không có mô hình đó. Chạy `node serverless/scripts/check-api.cjs --models` để xem danh sách tên được dùng, chọn một tên rồi đặt vào `$env:MODEL`.
 - **HTTP 401 / 403**: khóa sai, hết hạn mức, hoặc bị từ chối.
 
+### Cấu hình cho đại lý (sau khi `check-api` báo THÀNH CÔNG)
+
+Ở GitHub (Settings → Secrets and variables → Actions):
+
+| Loại | Tên | Giá trị |
+|---|---|---|
+| Secret | `ANTHROPIC_API_KEY` | khóa của đại lý |
+| Variable | `ANTHROPIC_BASE_URL` | địa chỉ đại lý **không có `/v1`** (Claude Code tự thêm `/v1/messages`; thêm `/v1` sẽ thành `/v1/v1/messages` và báo 404). Ví dụ `https://cheapkeyai.shop` |
+| Variable | `CLAUDE_MODEL` | mô hình chính, một tên có trong `--models` (ví dụ loại Sonnet để sửa mã) |
+| Variable | `CLAUDE_SMALL_MODEL` | mô hình nhỏ cho việc phụ, một tên Haiku có trong `--models`. Bỏ trống thì dùng `claude-haiku-4-5-20251001` |
+
+Bỏ trống `CLAUDE_MODEL` thì Claude Code tự chọn tên mặc định của nó, có thể không có trong danh sách của đại lý.
+
 **Rủi ro cần nhắc, nhất là với đại lý bán "khóa rẻ":**
 - **Toàn bộ mã và câu lệnh của bạn đi qua máy chủ của họ.** Họ đọc, lưu được mọi thứ Claude đọc trong repo. Chỉ dùng với repo **không chứa bí mật hay mã nhạy cảm**.
 - **Nguồn khóa không rõ.** Khóa giá rẻ có thể đến từ tài khoản dùng chung hoặc tài khoản bị lạm dụng, có thể bị thu hồi bất cứ lúc nào, và dùng như vậy có thể vi phạm điều khoản của Anthropic. Tôi không đánh giá được riêng đại lý bạn đang dùng, bạn tự cân nhắc.
