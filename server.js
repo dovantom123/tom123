@@ -658,7 +658,10 @@ async function giaoViec(agentKey, text) {
   if (h && h.phase !== "ended") {
     const r = cmdq.push(a.id, { type: "message", text: `[Việc từ ${CFG.ownerName} qua Telegram] ${body}`, name: a.name, agentKey: a.key });
     if (!r.ok) return { ok: false, msg: `Không xếp được: ${r.error}.` };
-    return { ok: true, msg: h.phase === "working" ? `Đã xếp hàng cho ${a.name}. Sẽ giao khi phiên xong lượt này (hết hạn sau ${ttl} phút).` : `${a.name} đang rảnh. Việc sẽ được giao khi phiên chạy lượt tiếp theo, tức là sau khi bạn gõ gì đó vào phiên đó (hết hạn sau ${ttl} phút).` };
+    const msg = h.phase === "working" ? `Đã xếp hàng cho ${a.name}. Sẽ giao khi phiên xong lượt này (hết hạn sau ${ttl} phút).`
+      : h.phase === "waiting" ? `Đã xếp hàng cho ${a.name}. Phiên đang chờ bạn duyệt quyền; việc sẽ được giao khi phiên xong lượt này (hết hạn sau ${ttl} phút).`
+      : `${a.name} đang rảnh. Việc sẽ được giao khi phiên chạy lượt tiếp theo, tức là sau khi bạn gõ gì đó vào phiên đó (hết hạn sau ${ttl} phút).`;
+    return { ok: true, msg };
   }
   try { mailbox.append(DATA, a.name, { su_kien: "tin", id: mailbox.newId(), tu: CFG.ownerName, toi: a.name, to_key: a.key, kenh: "telegram", tin: body }); }
   catch (e) { return { ok: false, msg: `Không ghi được hòm thư: ${e.message}` }; }

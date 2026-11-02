@@ -250,11 +250,13 @@ test("tmuxDelivery: phiên rảnh thì gõ việc vào tmux; đang làm hoặc c
   try {
     await new Promise((ok) => setTimeout(ok, 600));
     await hook(s, { e: "UserPromptSubmit", x: pane });
-    tg.say("/viec 1 việc khi đang làm"); await until(() => tg.sent.length >= 1);
-    assert.match(tg.texts()[0], /Đã xếp hàng/); assert.equal(lines().length, 0, "đang làm thì không gõ");
+    const queued = () => tg.texts().filter((x) => /Đã xếp hàng/.test(x)).length; // chờ đúng nội dung, không đếm số tin (còn có tin "xong lượt", "đã giao"…)
+    tg.say("/viec 1 việc khi đang làm"); await until(() => queued() >= 1);
+    assert.equal(queued(), 1); assert.equal(lines().length, 0, "đang làm thì không gõ");
     await hook(s, { e: "Stop", x: pane }); // giao việc xếp hàng qua hook, lấy hết hàng
     await hook(s, { e: "PermissionRequest", x: { tool_name: "Bash", ...pane } });
-    tg.say("/viec 1 việc khi chờ duyệt"); await until(() => tg.sent.length >= 3);
+    tg.say("/viec 1 việc khi chờ duyệt"); await until(() => queued() >= 2);
+    assert.equal(queued(), 2, "đang chờ duyệt quyền thì chỉ xếp hàng");
     assert.equal(lines().length, 0, "đang chờ duyệt quyền thì không gõ (chữ sẽ thành câu trả lời cho hộp thoại)");
     await hook(s, { e: "PostToolUse", x: { tool_name: "Bash", ...pane } }); await hook(s, { e: "Stop", x: pane }); // rảnh, đã xong lượt
     tg.say("/viec 1 làm việc B"); await until(() => tg.texts().some((x) => /Đã gõ việc vào phiên/.test(x)));
@@ -271,8 +273,8 @@ test("tmuxDelivery tắt (mặc định): phiên rảnh không bao giờ bị g�
   try {
     await new Promise((ok) => setTimeout(ok, 600));
     await hook(s, { e: "UserPromptSubmit", x: { tmux_pane: "%3" } }); await hook(s, { e: "Stop", x: { tmux_pane: "%3" } });
-    tg.say("/viec 1 việc"); await until(() => tg.sent.length >= 1);
-    assert.match(tg.texts()[0], /đang rảnh\. Việc sẽ được giao/); assert.ok(!fs.existsSync(log), "không gọi tmux");
+    tg.say("/viec 1 việc"); await until(() => tg.texts().some((x) => /đang rảnh\. Việc sẽ được giao/.test(x)));
+    assert.ok(tg.texts().some((x) => /đang rảnh\. Việc sẽ được giao/.test(x))); assert.ok(!fs.existsSync(log), "không gọi tmux");
   } finally { srv.stop(); tg.srv.close(); fs.rmSync(bin, { recursive: true, force: true }); }
 });
 
