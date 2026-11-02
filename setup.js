@@ -1,12 +1,13 @@
 // Cài đặt văn phòng ảo: hỏi vài câu rồi ghi config.json.
 // Chạy: npm run setup
-// Không hỏi (cho agent): node setup.js --yes --project "D:/du-an" [--title "Văn phòng ABC"] [--owner "Anh Hải"] [--key <khóa xem>] [--chen-luat]
+// Không hỏi (cho agent): node setup.js --yes --project "D:/du-an" [--title "Văn phòng ABC"] [--owner "Anh Hải"] [--key <khóa xem>] [--chen-luat] [--hooks]
 "use strict";
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 const readline = require("readline");
+const hookinstall = require("./lib/hookinstall");
 
 const ROOT = __dirname, OUT = path.join(ROOT, "config.json");
 const HOME = os.homedir();
@@ -73,6 +74,7 @@ async function main() {
   const phone = flag("key") ? "c" : (await ask("Có muốn xem trên điện thoại qua Internet không? (c/k)", old.accessKey ? "c" : "k")).toLowerCase();
   const accessKey = flag("key") || (phone.startsWith("c") ? old.accessKey || crypto.randomBytes(9).toString("base64url") : "");
   const chen = args.includes("--chen-luat") ? "c" : YES ? "k" : (await ask("Dán đoạn luật đội vào AGENTS.md / CLAUDE.md của dự án để agent tự dùng văn phòng? (c/k)", "c")).toLowerCase();
+  const hk = args.includes("--hooks") ? "c" : YES ? "k" : (await ask("Cài hook Claude Code để trạng thái chính xác hơn? (sửa settings.json của Claude Code, có sao lưu, gỡ được bằng node tools/hooks.js go) (c/k)", "c")).toLowerCase();
   if (rl) rl.close();
 
   const cfg = { ...old, title, subtitle: old.subtitle || "Công ty AI · trực tiếp", ownerName, port: old.port || 7788, host: old.host || "127.0.0.1", projects, keepHours: old.keepHours || 24, accessKey, dataDir: old.dataDir || "data", aiCapUsd: old.aiCapUsd || 100, staff: old.staff || [], hide: old.hide || [] };
@@ -107,6 +109,10 @@ async function main() {
       console.log(`  Đã dán đoạn luật đội vào ${file}`);
     }
   } else console.log(`Đoạn luật cho agent: ${path.join(DATA, "DOAN-CHEN-VAO-AGENTS.md")} — dán vào AGENTS.md / CLAUDE.md của dự án.`);
+  if (hk.startsWith("c")) {
+    try { const r = hookinstall.install(ROOT); console.log(r.added.length || r.updated.length ? `Đã cài hook Claude Code vào ${r.file} (bản sao lưu nằm cạnh). Phiên đang mở cần mở lại để nhận hook.` : `Hook Claude Code đã đủ trong ${r.file}.`); }
+    catch (e) { console.log(`Chưa cài được hook: ${e.message}\n  (văn phòng vẫn chạy, chỉ dùng cách đọc nhật ký). Thử lại sau: node tools/hooks.js cai`); }
+  } else console.log("Hook Claude Code: chưa cài (văn phòng đọc nhật ký). Cài sau: node tools/hooks.js cai");
   if (accessKey) console.log(`\nKhóa xem văn phòng (ghi lại, nhập một lần trên điện thoại): ${accessKey}\nKhóa nằm trong config.json — đừng đưa file này lên GitHub.`);
   console.log("\nBước tiếp:  npm start   rồi mở http://localhost:7788\n");
 }

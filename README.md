@@ -9,6 +9,8 @@ Mỗi phiên là một nhân viên robot có bàn riêng:
 - ai đang giữ môi trường DEV thì đứng giữa Phòng DEV, ai đang chờ thì xếp hàng.
 
 > **Chỉ đọc, chạy tại máy bạn.** Văn phòng chỉ đọc nhật ký mà Claude Code và Codex vốn tự ghi (`~/.claude`, `~/.codex`) và sổ của đội trong thư mục `data/`. Nó không gửi dữ liệu đi đâu và không cần khóa API. Mọi chuỗi giống khóa đều được che trước khi hiện. Kho không dùng thư viện ngoài nào, nên không cần `npm install`.
+>
+> Có thể cài thêm **hook Claude Code** (tùy chọn, xem mục dưới) để trạng thái "đang làm / chờ bạn duyệt / lỗi" chính xác thay vì đoán qua nhật ký. Hook chỉ gửi vài trường tối thiểu về chính máy bạn (127.0.0.1), không gửi nội dung lệnh hay tệp.
 
 ---
 
@@ -85,6 +87,29 @@ Luật đội để dán vào dự án nằm ở `data/DOAN-CHEN-VAO-AGENTS.md`,
 - lấy và nhả lượt DEV;
 - ghi "Đang dở" trước khi nghỉ.
 
+## Hook Claude Code (trạng thái chính xác)
+
+Mặc định văn phòng đọc nhật ký phiên và đoán. Cài hook thì Claude Code tự báo: bắt đầu lượt, đang chạy tool, **chờ bạn duyệt quyền**, lỗi API, xong lượt, subagent, thoát phiên.
+
+```bash
+node tools/hooks.js cai   # thêm hook vào ~/.claude/settings.json (hoặc $CLAUDE_CONFIG_DIR), có sao lưu cạnh file
+node tools/hooks.js xem   # kiểm tra đã đủ chưa
+node tools/hooks.js go    # gỡ đúng hook của văn phòng, không đụng hook khác
+```
+
+Rồi mở lại phiên Claude Code đang chạy và khởi động lại `npm start`. (`npm run setup` cũng hỏi cài hook; agent cài dùng `--hooks`.)
+
+- **Phiên nào có hook thì dùng hook**, phiên nào chưa có thì vẫn đọc nhật ký như cũ. Codex chưa có hook nên vẫn đọc nhật ký.
+- Hộp xin quyền / hộp hỏi của Claude hiện ngay ở ô **Cần anh**, tắt khi bạn trả lời. Lượt lỗi API hiện là "bị chặn".
+- `hooks/emit.js` chỉ gửi tên sự kiện, mã phiên, tên tool, loại thông báo và thông báo ngắn tới `127.0.0.1`. Không gửi nội dung lệnh, đường dẫn tệp, kết quả tool. Máy chủ chỉ nhận khi gọi thẳng từ máy này kèm token trong `data/.hook-endpoint.json` (quyền 0600). Máy chủ chưa chạy hay lỗi gì thì hook im lặng thoát, không làm chậm hay chặn Claude.
+
+## Bảo mật khi mở ra ngoài
+
+- Máy chủ mặc định chỉ nghe `127.0.0.1` và từ chối `Host` lạ (chống DNS rebinding) khi chưa có `accessKey`.
+- Đặt `host` khác `127.0.0.1` mà **không có `accessKey` thì máy chủ từ chối chạy** (trừ khi bạn cố tình đặt `"allowOpenAccess": true`).
+- Khóa xem chỉ nhận qua form đăng nhập (POST), không nhận qua `?key=` trên địa chỉ nên không nằm lại trong lịch sử trình duyệt. Công cụ dòng lệnh dùng header `X-VP-Key`. Sai 5 lần trong 10 phút thì khóa 10 phút.
+- Cookie đăng nhập `HttpOnly`, `SameSite=Strict`.
+
 ## Xem trên điện thoại
 
 - **Cùng Wi-Fi:** đặt `"host": "0.0.0.0"` và `accessKey` trong `config.json`, rồi mở `http://<IP máy>:7788`.
@@ -96,8 +121,9 @@ Luật đội để dán vào dự án nằm ở `data/DOAN-CHEN-VAO-AGENTS.md`,
 |---|---|---|
 | `title`, `subtitle`, `ownerName` | Văn phòng AI, …, Giám đốc | Tên hiện trên văn phòng |
 | `projects` | `[]` | Thư mục dự án cần theo dõi (tính cả thư mục con, worktree). Để trống là mọi dự án |
-| `port`, `host` | 7788, 127.0.0.1 | `0.0.0.0` để máy khác trong mạng xem được |
-| `accessKey` | `""` | Khóa xem: nhập một lần mới vào được |
+| `port`, `host` | 7788, 127.0.0.1 | `0.0.0.0` để máy khác trong mạng xem được (bắt buộc có `accessKey`) |
+| `allowOpenAccess` | `false` | `true` = cho phép mở ra mạng không khóa (không nên) |
+| `accessKey` | `""` | Khóa xem: nhập một lần ở form đăng nhập mới vào được |
 | `keepHours` | 24 | Phiên im quá số giờ này thì rời văn phòng |
 | `staff`, `hide` | `[]` | Đặt tên, chức danh, phòng (`manager`, `coord`, `g1`, `claude`, `codex`) cho phiên; giấu phiên |
 | `dataDir` | `data` | Nơi để sổ điều phối |
@@ -121,7 +147,11 @@ Luật đội để dán vào dự án nằm ở `data/DOAN-CHEN-VAO-AGENTS.md`,
 ```
 server.js              máy chủ: tìm phiên, đọc nhật ký + sổ, đẩy trạng thái mỗi giây
 lib/                   perf (token, điểm, tiền) · docs (sổ sách) · hopthu · tongquan · chat (PIN) · mailbox · config
+                       mask (che khóa) · hookstate (trạng thái từ hook) · hookinstall · netguard (Host, giới hạn thử sai, token hook)
 tools/vp.js            công cụ ghi sổ cho agent
+tools/hooks.js         cài / gỡ / xem hook Claude Code
+hooks/emit.js          hook: rút gọn sự kiện rồi POST về máy chủ
+test/                  npm test (node --test, không cần thư viện)
 setup.js               cài đặt (hỏi–đáp hoặc --yes cho agent)
 mau/                   khung mẫu sổ điều phối + đoạn luật đội cho AGENTS.md / CLAUDE.md
 public/                giao diện: index (3D), board, congviec, noiquy, tongquan, hopthu, hieusuat, tinnhan, 2d
@@ -129,4 +159,4 @@ scripts/               mở đường hầm xem trên điện thoại
 HUONG-DAN-CHO-AGENT.md hướng dẫn để agent tự cài từ link này
 ```
 
-Giấy phép MIT.
+Giấy phép MIT. Mã gốc: `van-phong-ao-3d` của vinaichatbot-rgb (giữ nguyên LICENSE); bản này thêm hook Claude Code, siết bảo mật và test.

@@ -6,7 +6,9 @@
   "scripts": {
     "setup": "node setup.js",
     "start": "node server.js",
-    "vp": "node tools/vp.js"
+    "vp": "node tools/vp.js",
+    "hooks": "node tools/hooks.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"

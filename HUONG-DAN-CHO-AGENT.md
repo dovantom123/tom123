@@ -63,11 +63,21 @@ Kiểm tra máy chủ đã lên:
 curl -s http://127.0.0.1:7788/state
 ```
 
-Kết quả phải là JSON. Trường `agents` phải có ít nhất 2 người: chủ (`ceo`) và chính phiên của bạn. Nếu chỉ có 1 người:
+Kết quả phải là JSON. (Nếu đã đặt `accessKey` thì thêm header `-H "X-VP-Key: <khóa>"`; địa chỉ `?key=` không còn dùng được.) Trường `agents` phải có ít nhất 2 người: chủ (`ceo`) và chính phiên của bạn. Nếu chỉ có 1 người:
 - kiểm `projects` trong `config.json` có đúng thư mục dự án không, dùng dấu `/`;
 - chờ 5 giây rồi hỏi lại.
 
 Chủ mở văn phòng ở **http://localhost:7788**.
+
+## 4b. Cài hook Claude Code (tùy chọn, hỏi chủ trước)
+
+Hook làm trạng thái chính xác (chờ duyệt quyền, lỗi API…). Việc này **sửa `settings.json` của Claude Code** (có sao lưu, gỡ được), nên phải hỏi chủ:
+
+```bash
+node tools/hooks.js cai
+```
+
+Chủ muốn gỡ: `node tools/hooks.js go`. Sau khi cài, phiên Claude Code đang mở cần mở lại.
 
 ## 5. Đưa luật đội vào dự án (hỏi chủ trước)
 

@@ -15,6 +15,9 @@ const docs = require("./lib/docs");
 const hopthu = require("./lib/hopthu");
 const tongquan = require("./lib/tongquan");
 const { loadConfig } = require("./lib/config");
+const M = require("./lib/mask");
+const net = require("./lib/netguard");
+const { createHookState } = require("./lib/hookstate");
 
 const ROOT = __dirname;
 const CFG = loadConfig(ROOT);
@@ -27,28 +30,11 @@ const MAX_READ = 16_000_000;
 
 // ---------- tiện ích ----------
 const now = () => Date.now();
-function mask(s) {
-  if (!s) return "";
-  const pin = chat.currentPin(); if (pin && /^\d{6}$/.test(pin)) s = String(s).split(pin).join("‹PIN›"); // không lộ mã PIN nhắn tin
-  return String(s)
-    .replace(/[A-Za-z]:[\\/][^\s|;,]*secrets?[^\s|;,]*/gi, "‹thư mục khóa›")
-    .replace(/((?:api[_-]?)?key|token|secret|password|passwd|pwd|bearer)\s*[:=]\s*\S+/gi, "$1=‹ẩn›")
-    .replace(/\b(sk|pk|rk|ghp|gho|github_pat|xox[abp]|AKIA|AIza)[-_A-Za-z0-9]{12,}/g, "‹khóa›")
-    .replace(/[A-Za-z0-9_\-+/=]{48,}/g, "…")
-    .replace(/\*\*|`/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+// Mã PIN nhắn tin không bao giờ được hiện ra, rồi mới tới các quy tắc che khóa chung (lib/mask.js).
+function withoutPin(s) { const pin = chat.currentPin(); return pin && /^\d{6}$/.test(pin) ? String(s).split(pin).join("‹PIN›") : s; }
+const mask = (s) => (s ? M.mask(withoutPin(s)) : "");
 // Che khóa trong sổ sách mà vẫn giữ xuống dòng và định dạng Markdown (nội quy, bài học…).
-function maskDoc(s) {
-  if (!s) return "";
-  const pin = chat.currentPin(); if (pin && /^\d{6}$/.test(pin)) s = String(s).split(pin).join("‹PIN›");
-  return String(s)
-    .replace(/[A-Za-z]:[\\/][^\s|;,`]*secrets?[^\s|;,`]*/gi, "‹thư mục khóa›")
-    .replace(/((?:api[_-]?)?key|token|secret|password|passwd|pwd)\s*[:=]\s*[^\s`|]+/gi, "$1=‹ẩn›")
-    .replace(/\b(sk|pk|rk|ghp|gho|github_pat|xox[abp]|AKIA|AIza)[-_A-Za-z0-9]{12,}/g, "‹khóa›")
-    .replace(/\b(?=[A-Za-z0-9+/=]*[A-Z])(?=[A-Za-z0-9+/=]*[a-z])(?=[A-Za-z0-9+/=]*\d)[A-Za-z0-9+/=]{40,}\b/g, "…");
-}
+const maskDoc = (s) => (s ? M.maskDoc(withoutPin(s)) : "");
 const clip = (s, n = 180) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 function safeStat(p) { try { return fs.statSync(p); } catch { return null; } }
 function readRange(p, start, end) {
@@ -74,6 +60,8 @@ const hidden = new Set(CFG.hide || []);
 // Phòng (mã nội bộ → tên hiện): ceo = Giám đốc (bạn), manager = Quản lý, coord = Điều phối, g1 = Kiểm tra & duyệt, claude, codex, dev.
 const agents = [];
 const byKey = {};
+// Trạng thái từ hook Claude Code (hooks/emit.js → POST /hook). Có thì dùng, không có thì quay về đọc nhật ký.
+const hooks = createHookState({ mask: (x) => clip(mask(x), 300) });
 function mark(a, t) { a.mins.add(Math.floor(t / 60000)); if (a.mins.size > 12000) { const cut = Math.floor((now() - 8 * 86400000) / 60000); for (const m of a.mins) if (m < cut) a.mins.delete(m); } }
 function blank(a) { return { ...a, file: null, size: 0, offset: 0, mtime: 0, lastText: "", lastTail: "", lastTextAt: 0, working: false, subActive: 0, mins: new Set(), done: [], tools: [], lastUserAt: 0, ceoLastAt: 0, ceoLastText: "" }; }
 const ceo = blank({ key: "ceo", name: CFG.ownerName, role: "Chủ văn phòng", platform: "human", room: "ceo", journal: "none:ceo", ceo: true, aliases: [CFG.ownerName, "CEO", "Giám đốc"] });
@@ -445,10 +433,11 @@ function askLine(text, re) {
 function ceoAsks(out, t) {
   const items = [], seen = new Set();
   for (const r of canAnh) if (r.open) { items.push({ kind: "so", exact: true, who: r.who, whoLabel: r.whoLabel, since: r.since, text: r.text + (r.options ? " — " + r.options : ""), id: r.id, answered: !!(r.who && byKey[r.who] && byKey[r.who].lastUserAt > r.since) }); if (r.who) seen.add(r.who); }
-  for (const s of out) { const a = byKey[s.key]; if (a && a.pendingAsk && t - a.pendingAsk.t < 24 * 3600000) { items.push({ kind: "hoi", exact: true, who: s.key, since: a.pendingAsk.t, text: a.pendingAsk.text }); seen.add(s.key); } }
+  for (const s of out) { const a = byKey[s.key]; if (a && a.pendingAsk && !seen.has(s.key) && t - a.pendingAsk.t < 24 * 3600000) { items.push({ kind: "hoi", exact: true, who: s.key, since: a.pendingAsk.t, text: a.pendingAsk.text }); seen.add(s.key); } }
+  for (const s of out) if (s.hook && s.hook.phase === "waiting" && !seen.has(s.key)) { items.push({ kind: "hoi", exact: true, who: s.key, since: s.hook.since, text: s.hook.text || "Chờ bạn trả lời" }); seen.add(s.key); }
   for (const e of events) if (t - e.t < 24 * 3600000 && /^\s*\[CẦN ANH/.test(e.body || e.title) && !seen.has(e.from)) { items.push({ kind: "tag", exact: true, who: e.from, to: e.to, since: e.t, text: clip(e.body || e.title, 300) }); seen.add(e.from); }
   for (const s of out) {
-    const a = byKey[s.key]; if (!a || a.ceo || !a.lastTail || s.status === "active" || seen.has(s.key)) continue;
+    const a = byKey[s.key]; if (!a || a.ceo || !a.lastTail || s.status === "active" || s.hook || seen.has(s.key)) continue;
     const tail = a.lastTail.split(/(?<=[.?!])\s+/).filter((x) => (x.match(/\|/g) || []).length < 2).join(" ");
     if (a.lastUserAt && a.lastTextAt > a.lastUserAt && t - a.lastTextAt < 24 * 3600000 && /\b(anh|chị|sếp|CEO)\b/i.test(tail) && ASK_REPLY.test(tail.slice(-300)) && !NOT_ASK.test(tail)) {
       items.push({ kind: "reply", guess: true, who: s.key, since: a.lastTextAt, text: askLine(tail, /\?|anh (duyệt|chọn|quyết|cho phép|xác nhận|muốn|nói)|làm đi/i) }); seen.add(s.key);
@@ -481,7 +470,11 @@ function statusOf(a, t) {
   if (a.ceo) return a.ceoLastAt && t - a.ceoLastAt < 15 * 60000 ? "active" : "away";
   const quiet = a.mtime ? t - a.mtime : Infinity;
   let st = quiet < 90000 || (a.working && quiet < 10 * 60000) ? "active" : quiet < 6 * 3600000 ? "idle" : "away";
-  if (a.platform === "claude") { const L = live.get(a.id); if (L) st = L.busy ? "active" : "idle"; else if (live.size && quiet > 90000) st = "away"; }
+  if (a.platform === "claude") {
+    const L = live.get(a.id); if (L) st = L.busy ? "active" : "idle"; else if (live.size && quiet > 90000) st = "away";
+    const h = hooks.view(a.id, t);
+    if (h) st = h.phase === "working" ? "active" : h.phase === "ended" ? "away" : "idle";
+  }
   return st;
 }
 function snapshot() {
@@ -491,10 +484,13 @@ function snapshot() {
     if (dev.holder === a.key) { where = "dev"; status = "active"; }
     const qi = (dev.queue || []).findIndex((q) => q.agent === a.key);
     const lt = a.ceo ? a.ceoLastText : a.lastText;
-    if (!a.ceo && /\[CHẶN\]|bị chặn|đang chặn|\bblocked\b/i.test(lt) && status !== "active" && status !== "away" && t - a.lastTextAt < 3 * 3600000) flag = "blocked";
+    const h = !a.ceo && a.platform === "claude" ? hooks.view(a.id, t) : null; // hook có thì tin hook, không đoán qua chữ trong câu trả lời
+    if (!a.ceo && !h && /\[CHẶN\]|bị chặn|đang chặn|\bblocked\b/i.test(lt) && status !== "active" && status !== "away" && t - a.lastTextAt < 3 * 3600000) flag = "blocked";
     else if (qi >= 0 && where !== "dev") { flag = "waiting"; where = "g1q"; }
+    if (h && h.phase === "error" && !flag) flag = "blocked";
     const L = !a.ceo && live.get(a.id);
     return { key: a.key, name: a.name, role: a.role, platform: a.platform, room: a.room, where, status, flag, session: a.ceo ? null : a.id.slice(0, 8), host: L && L.host ? L.host.slice(0, 8) : null,
+      nguon: a.ceo ? null : h ? "hook" : "nhat-ky", hook: h ? { phase: h.phase, since: h.since, text: h.text, tool: h.tool, subagents: h.subagents } : null,
       lastText: lt, lastTextAt: a.ceo ? a.ceoLastAt : a.lastTextAt, queuePos: qi >= 0 ? qi + 1 : null, lastActive: a.ceo ? a.ceoLastAt : a.mtime, sub: a.subActive || 0,
       hasJournal: !!(a.file || a.ceo), isNew: !a.ceo && t - a.createdAt < 3600000, createdAt: a.ceo ? null : a.createdAt, hist: Array.from({ length: 60 }, (_, i) => (a.mins.has(nowMin - 59 + i) ? 1 : 0)) };
   });
@@ -574,18 +570,22 @@ setInterval(() => { if (!clients.size) return; const d = "data: " + JSON.stringi
 setInterval(() => { if (!perfClients.size) return; const d = "data: " + JSON.stringify(perfNow()) + "\n\n"; for (const r of perfClients) r.write(d); }, 2000);
 
 // Khóa xem (tùy chọn): đặt "accessKey" trong config.json thì phải nhập khóa một lần mới xem được (nên bật khi mở ra Internet).
+// Khóa chỉ nhận qua form POST /login (hoặc header X-VP-Key cho công cụ), KHÔNG nhận qua địa chỉ ?key= để khỏi lọt vào lịch sử trình duyệt và log.
 const KEY = String(CFG.accessKey || "");
 const keyHash = KEY ? crypto.createHash("sha256").update(KEY).digest("hex").slice(0, 32) : "";
-const sameKey = (x) => { const a = Buffer.from(String(x || "")), b = Buffer.from(KEY); return a.length === b.length && crypto.timingSafeEqual(a, b); };
-function authed(req, url) {
+const LOOPBACK_ONLY = net.isLoopbackBind(CFG.host);
+const loginLimiter = net.createLimiter({ max: 5, windowMs: 600000 });
+const clientId = (req) => String(req.headers["cf-connecting-ip"] || req.socket.remoteAddress || "?");
+function authed(req) {
   if (!KEY) return true;
   const ck = (req.headers.cookie || "").split(/;\s*/).find((c) => c.startsWith("vpk="));
-  return (ck && ck.slice(4) === keyHash) || sameKey(url.searchParams.get("key"));
+  return (ck && net.safeEqual(ck.slice(4), keyHash)) || net.safeEqual(req.headers["x-vp-key"], KEY);
 }
-const LOGIN = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Văn phòng AI</title>
+const loginPage = (msg) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Văn phòng AI</title>
 <body style="margin:0;height:100vh;display:grid;place-items:center;background:#05070a;color:#eee;font-family:system-ui,sans-serif">
-<form method="get" style="display:grid;gap:10px;width:min(320px,90vw)"><b style="font-size:18px">Nhập khóa xem văn phòng</b>
-<input name="key" type="password" autofocus style="padding:12px;border-radius:10px;border:1px solid #333;background:#111;color:#eee;font-size:16px">
+<form method="post" action="/login" style="display:grid;gap:10px;width:min(320px,90vw)"><b style="font-size:18px">Nhập khóa xem văn phòng</b>
+${msg ? `<div style="color:#ff8a8a;font-size:14px">${msg}</div>` : ""}
+<input name="key" type="password" autocomplete="current-password" autofocus style="padding:12px;border-radius:10px;border:1px solid #333;background:#111;color:#eee;font-size:16px">
 <button style="padding:12px;border-radius:10px;border:0;background:#ecc970;font-weight:700;font-size:15px">Vào xem</button></form></body>`;
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
 const json = (res, body) => { res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-cache" }); res.end(typeof body === "string" ? body : JSON.stringify(body)); };
@@ -593,10 +593,43 @@ function sse(req, res, set, first) {
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
   res.write("data: " + JSON.stringify(first) + "\n\n"); set.add(res); req.on("close", () => set.delete(res));
 }
-http.createServer((req, res) => {
+function readBody(req, max) {
+  return new Promise((ok, bad) => { let b = ""; req.on("data", (c) => { b += c; if (b.length > max) { bad(new Error("quá dài")); req.destroy(); } }); req.on("end", () => ok(b)); req.on("error", bad); });
+}
+const hookToken = { v: "" }; // đặt khi máy chủ đã nghe (cần cổng thật)
+// Hook của Claude Code (hooks/emit.js) báo trạng thái phiên. Chỉ nhận từ chính máy này, không qua đường hầm, và phải có token.
+async function hookRoute(req, res) {
+  const end = (code) => { res.writeHead(code, { "Cache-Control": "no-store" }); res.end(); };
+  if (req.method !== "POST") return end(405);
+  if (!net.isDirectLocal(req) || !hookToken.v || !net.safeEqual(req.headers["x-vp-token"], hookToken.v)) return end(401);
+  let ev; try { ev = JSON.parse(await readBody(req, 20000)); } catch { return end(400); }
+  end(hooks.ingest(ev) ? 204 : 422);
+}
+async function loginRoute(req, res) {
+  const who = clientId(req), page = (code, msg) => { res.writeHead(code, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }); res.end(loginPage(msg)); };
+  if (!KEY) { res.writeHead(303, { Location: "/" }); return res.end(); }
+  if (loginLimiter.blocked(who)) return page(429, "Nhập sai quá 5 lần, chờ 10 phút rồi thử lại.");
+  let given = ""; try { given = new URLSearchParams(await readBody(req, 2000)).get("key") || ""; } catch { return page(400, "Yêu cầu không hợp lệ."); }
+  if (!net.safeEqual(given, KEY)) { loginLimiter.fail(who); return page(401, "Sai khóa."); }
+  loginLimiter.reset(who);
+  const secure = String(req.headers["x-forwarded-proto"] || "").includes("https") ? "; Secure" : "";
+  res.writeHead(303, { "Set-Cookie": `vpk=${keyHash}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${secure}`, Location: "/", "Cache-Control": "no-store" });
+  res.end();
+}
+const OPEN_BIND = !LOOPBACK_ONLY && !KEY;
+if (OPEN_BIND && !CFG.allowOpenAccess) {
+  console.error(`\n  Từ chối chạy: host = "${CFG.host}" mở văn phòng cho cả mạng mà chưa có accessKey.\n  Ai trong mạng cũng sẽ đọc được hội thoại các phiên AI. Hãy đặt accessKey trong config.json (npm run setup),\n  hoặc đổi host về "127.0.0.1". Muốn cố tình mở không khóa thì đặt "allowOpenAccess": true.\n`);
+  process.exit(1);
+}
+const server = http.createServer((req, res) => {
+  res.setHeader("X-Content-Type-Options", "nosniff"); res.setHeader("Referrer-Policy", "no-referrer"); res.setHeader("X-Frame-Options", "SAMEORIGIN");
   const url = new URL(req.url, "http://x");
-  if (!authed(req, url)) { res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" }); return res.end(LOGIN); }
-  if (KEY && url.searchParams.has("key")) { res.writeHead(302, { "Set-Cookie": `vpk=${keyHash}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`, Location: url.pathname }); return res.end(); }
+  // Chống DNS rebinding: chỉ nghe trên máy này và không có khóa thì chỉ nhận Host là localhost / 127.0.0.1 / [::1].
+  // (Có accessKey thì đường hầm Cloudflare được phép dùng tên miền riêng, khóa bảo vệ thay.)
+  if (LOOPBACK_ONLY && !KEY && !net.hostAllowed(req.headers.host)) { res.writeHead(421, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("Host không hợp lệ"); }
+  if (url.pathname === "/hook") return void hookRoute(req, res).catch(() => { if (!res.headersSent) { res.writeHead(500); res.end(); } });
+  if (url.pathname === "/login" && req.method === "POST") return void loginRoute(req, res).catch(() => { if (!res.headersSent) { res.writeHead(500); res.end(); } });
+  if (!authed(req)) { res.writeHead(401, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }); return res.end(loginPage("")); }
   if (url.pathname === "/events") return sse(req, res, clients, snapshot());
   if (url.pathname === "/state") return json(res, snapshot());
   if (url.pathname === "/perf-events") return sse(req, res, perfClients, perfNow());
@@ -615,10 +648,16 @@ http.createServer((req, res) => {
     if (err) { res.writeHead(404); return res.end("không có"); }
     res.writeHead(200, { "Content-Type": MIME[path.extname(p)] || "application/octet-stream", "Cache-Control": "no-cache" }); res.end(buf);
   });
-}).listen(PORT, CFG.host, () => {
+});
+server.listen(PORT, CFG.host, () => {
+  const port = server.address().port;
+  try { fs.mkdirSync(DATA, { recursive: true }); hookToken.v = net.writeEndpoint(path.join(DATA, ".hook-endpoint.json"), port); } catch (e) { console.error("Không ghi được tệp hook:", e.message); }
   console.log(`\n  ${CFG.title} đang chạy`);
-  console.log(`  Mở trên máy này:  http://localhost:${PORT}`);
+  console.log(`  Mở trên máy này:  http://localhost:${port}`);
   console.log(`  Dự án theo dõi:   ${PROJECTS.length ? PROJECTS.join(", ") : "mọi dự án trên máy"}`);
   console.log(`  Sổ điều phối:     ${DATA}`);
-  console.log(`  Khóa xem:         ${KEY ? "đang bật" : "tắt (chỉ máy này xem được nếu host = 127.0.0.1)"}\n`);
+  console.log(`  Khóa xem:         ${KEY ? "đang bật" : "tắt (chỉ máy này xem được nếu host = 127.0.0.1)"}`);
+  console.log(`  Hook Claude Code: nhận ở /hook (cài bằng: node tools/hooks.js cai)`);
+  if (OPEN_BIND) console.log("  (!) Đang mở không khóa theo allowOpenAccess: cả mạng đọc được hội thoại các phiên AI.");
+  console.log("");
 });
