@@ -57,3 +57,12 @@ test("che bí mật trong thông báo và giới hạn số phiên", () => {
   for (let i = 0; i < 600; i++) hs.ingest({ hook_event_name: "Stop", session_id: "sess-" + String(i).padStart(6, "0") });
   assert.ok(hs.size() <= 500);
 });
+
+test("nhớ pane tmux hợp lệ; lastKnown còn dùng được khi view đã cũ", () => {
+  const { hs, tick } = make();
+  hs.ingest(ev("UserPromptSubmit", { tmux_pane: "%7", tmux_socket: "/tmp/tmux-1000/default" })); hs.ingest(ev("Stop"));
+  tick(7 * 3600000); assert.equal(hs.view(SID), null, "view bỏ trạng thái cũ");
+  assert.deepEqual(hs.lastKnown(SID), { phase: "idle", last: hs.lastKnown(SID).last, doneAt: hs.lastKnown(SID).doneAt, pane: "%7", socket: "/tmp/tmux-1000/default" });
+  assert.ok(hs.lastKnown(SID).doneAt > 0); assert.equal(hs.lastKnown("khong-co-phien"), null);
+  hs.ingest(ev("Stop", { tmux_pane: "%7; id", tmux_socket: "tmp/x y" })); assert.equal(hs.lastKnown(SID).pane, "%7", "giá trị xấu bị bỏ, giữ giá trị cũ");
+});

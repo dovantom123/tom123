@@ -16,6 +16,9 @@ function slim(payload) {
   for (const k of KEEP) if (typeof payload[k] === "string") out[k] = payload[k].slice(0, 80);
   if (typeof payload.message === "string") out.message = payload.message.slice(0, 300);
   if (typeof payload.error === "string") out.error = payload.error.slice(0, 200);
+  // Phiên chạy trong tmux (thường là VPS): báo pane để văn phòng có thể gõ việc giao từ xa vào khi phiên rảnh (chỉ dùng nếu bạn bật tmuxDelivery).
+  if (/^%\d{1,6}$/.test(process.env.TMUX_PANE || "")) out.tmux_pane = process.env.TMUX_PANE;
+  const sock = String(process.env.TMUX || "").split(",")[0]; if (/^\/[A-Za-z0-9._/-]{1,200}$/.test(sock)) out.tmux_socket = sock;
   return out;
 }
 

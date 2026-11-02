@@ -1,0 +1,23 @@
+# Dịch vụ systemd chạy văn phòng ảo 24/7 trên VPS. Cài bằng deploy/HUONG-DAN-VPS.md (bước 7); đừng sửa tay nếu chưa đọc.
+# Các chỗ __GẠCH_GẠCH__ được thay bằng lệnh sed ở hướng dẫn: __USER__ (tên user Linux), __DIR__ (thư mục mã), __NODE__ (đường dẫn node).
+[Unit]
+Description=Van phong ao 3D (theo doi va dieu phoi doi AI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+# Token Telegram nằm ở đây (chmod 600), không nằm trong tệp unit hay config.json. Dấu "-" = không có tệp cũng được.
+EnvironmentFile=-/home/__USER__/.vpao.env
+ExecStart=__NODE__ server.js
+Restart=always
+RestartSec=5
+# Văn phòng chỉ nghe 127.0.0.1 (xem qua đường hầm SSH). Không đặt PrivateTmp: nó cần chạm socket tmux của agent ở /tmp để gõ việc vào phiên.
+NoNewPrivileges=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

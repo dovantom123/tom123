@@ -239,3 +239,39 @@ test("hooks/emit.js: in quyết định block ra stdout khi máy chủ có việ
     assert.equal((await run({ hook_event_name: "Stop" })).out, "");
   } finally { srv.stop(); tg.srv.close(); }
 });
+
+test("tmuxDelivery: phiên rảnh thì gõ việc vào tmux; đang làm hoặc chờ duyệt thì KHÔNG gõ", { skip: process.platform === "win32" }, async () => {
+  const tg = fakeTelegram(), base = await tg.listen();
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "vpao-fakebin-")), log = path.join(bin, "tmux.log");
+  fs.writeFileSync(path.join(bin, "tmux"), `#!/bin/sh\necho "$@" >> "$TMUX_LOG"\ncase "$*" in *display-message*) while [ $# -gt 0 ]; do if [ "$1" = "-t" ]; then echo "$2"; break; fi; shift; done;; esac\n`, { mode: 0o755 });
+  const srv = start({ alerts: { ...TG(base).alerts, tmuxDelivery: true } }, { ...TGENV(base), PATH: bin + path.delimiter + process.env.PATH, TMUX_LOG: log }); const s = await srv.ready;
+  const lines = () => { try { return fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean); } catch { return []; } };
+  const pane = { tmux_pane: "%3", tmux_socket: "/tmp/tmux-1000/default" };
+  try {
+    await new Promise((ok) => setTimeout(ok, 600));
+    await hook(s, { e: "UserPromptSubmit", x: pane });
+    tg.say("/viec 1 việc khi đang làm"); await until(() => tg.sent.length >= 1);
+    assert.match(tg.texts()[0], /Đã xếp hàng/); assert.equal(lines().length, 0, "đang làm thì không gõ");
+    await hook(s, { e: "Stop", x: pane }); // giao việc xếp hàng qua hook, lấy hết hàng
+    await hook(s, { e: "PermissionRequest", x: { tool_name: "Bash", ...pane } });
+    tg.say("/viec 1 việc khi chờ duyệt"); await until(() => tg.sent.length >= 3);
+    assert.equal(lines().length, 0, "đang chờ duyệt quyền thì không gõ (chữ sẽ thành câu trả lời cho hộp thoại)");
+    await hook(s, { e: "PostToolUse", x: { tool_name: "Bash", ...pane } }); await hook(s, { e: "Stop", x: pane }); // rảnh, đã xong lượt
+    tg.say("/viec 1 làm việc B"); await until(() => tg.texts().some((x) => /Đã gõ việc vào phiên/.test(x)));
+    const L = lines(); assert.equal(L.length, 4, L.join("\n"));
+    assert.match(L[0], /^-S \/tmp\/tmux-1000\/default display-message -p -t %3/); assert.match(L[1], /send-keys -t %3 C-u$/);
+    assert.match(L[2], /send-keys -t %3 -l -- \[Việc từ Mr\. Dang qua Telegram\] làm việc B$|send-keys -t %3 -l -- \[Việc từ .* qua Telegram\] làm việc B$/); assert.match(L[3], /send-keys -t %3 Enter$/);
+  } finally { srv.stop(); tg.srv.close(); fs.rmSync(bin, { recursive: true, force: true }); }
+});
+test("tmuxDelivery tắt (mặc định): phiên rảnh không bao giờ bị gõ vào", { skip: process.platform === "win32" }, async () => {
+  const tg = fakeTelegram(), base = await tg.listen();
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "vpao-fakebin-")), log = path.join(bin, "tmux.log");
+  fs.writeFileSync(path.join(bin, "tmux"), `#!/bin/sh\necho "$@" >> "$TMUX_LOG"\n`, { mode: 0o755 });
+  const srv = start(TG(base), { ...TGENV(base), PATH: bin + path.delimiter + process.env.PATH, TMUX_LOG: log }); const s = await srv.ready;
+  try {
+    await new Promise((ok) => setTimeout(ok, 600));
+    await hook(s, { e: "UserPromptSubmit", x: { tmux_pane: "%3" } }); await hook(s, { e: "Stop", x: { tmux_pane: "%3" } });
+    tg.say("/viec 1 việc"); await until(() => tg.sent.length >= 1);
+    assert.match(tg.texts()[0], /đang rảnh\. Việc sẽ được giao/); assert.ok(!fs.existsSync(log), "không gọi tmux");
+  } finally { srv.stop(); tg.srv.close(); fs.rmSync(bin, { recursive: true, force: true }); }
+});

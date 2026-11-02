@@ -162,6 +162,12 @@ Khi đã bật cảnh báo Telegram (mục trên), bot còn **nhận lệnh từ
 - Tắt hẳn phần nhận lệnh bằng `"inbound": false` (vẫn nhận cảnh báo).
 - Chưa làm: nút Cho phép / Từ chối quyền ngay trong Telegram (duyệt nhầm lệnh nguy hiểm từ điện thoại là rủi ro lớn).
 
+## Chạy 24/7 trên máy chủ đám mây (VPS)
+
+Muốn máy tính tắt mà vẫn giao việc và nhận báo cáo qua Telegram thì chạy **cả Claude Code lẫn văn phòng trên cùng một VPS** (văn phòng đọc nhật ký trên máy nó chạy). Hướng dẫn từng bước, kèm file systemd và script tmux: [deploy/HUONG-DAN-VPS.md](deploy/HUONG-DAN-VPS.md).
+
+Trên VPS, phiên Claude chạy trong tmux và hay ở trạng thái rảnh, nên có tùy chọn `"alerts": {"tmuxDelivery": true}`: văn phòng **gõ việc từ Telegram vào phiên đang rảnh** (không qua shell, chỉ khi phiên đã xong ít nhất một lượt, không bao giờ gõ khi phiên đang làm hoặc chờ duyệt quyền). Mặc định tắt.
+
 ## Bảo mật khi mở ra ngoài
 
 - Máy chủ mặc định chỉ nghe `127.0.0.1` và từ chối `Host` lạ (chống DNS rebinding) khi chưa có `accessKey`.
@@ -181,7 +187,7 @@ Khi đã bật cảnh báo Telegram (mục trên), bot còn **nhận lệnh từ
 | `title`, `subtitle`, `ownerName` | Văn phòng AI, …, Giám đốc | Tên hiện trên văn phòng |
 | `projects` | `[]` | Thư mục dự án cần theo dõi (tính cả thư mục con, worktree). Để trống là mọi dự án |
 | `port`, `host` | 7788, 127.0.0.1 | `0.0.0.0` để máy khác trong mạng xem được (bắt buộc có `accessKey`) |
-| `alerts` | `{}` | Cảnh báo và lệnh Telegram (xem hai mục trên). Để trống = tắt. Khóa con: `telegram.{botToken,chatId,allowedUserIds}`, `includeText`, `quiet`, `reportDone`, `reportGapSec`, `inbound`, `taskTtlMin`, `maxPerHour`, `blockedAfterMin`, `cooldownMin`, `dashboardUrl` |
+| `alerts` | `{}` | Cảnh báo và lệnh Telegram (xem hai mục trên). Để trống = tắt. Khóa con: `telegram.{botToken,chatId,allowedUserIds}`, `includeText`, `quiet`, `reportDone`, `reportGapSec`, `inbound`, `taskTtlMin`, `tmuxDelivery`, `maxPerHour`, `blockedAfterMin`, `cooldownMin`, `dashboardUrl` |
 | `allowOpenAccess` | `false` | `true` = cho phép mở ra mạng không khóa (không nên) |
 | `accessKey` | `""` | Khóa xem: nhập một lần ở form đăng nhập mới vào được |
 | `keepHours` | 24 | Phiên im quá số giờ này thì rời văn phòng |
@@ -211,7 +217,8 @@ lib/                   tgbot (nhận lệnh Telegram) · commandq (hàng đợi 
 tools/vp.js            công cụ ghi sổ cho agent
 tools/hooks.js         cài / gỡ / xem hook Claude Code
 tools/alerts.js        xem / tìm chat id / gửi tin thử cho cảnh báo Telegram
-hooks/emit.js          hook: rút gọn sự kiện rồi POST về máy chủ
+deploy/                hướng dẫn và file cho VPS: systemd, tmux, mẫu biến môi trường
+hooks/emit.js          hook: rút gọn sự kiện rồi POST về máy chủ (và nhận việc giao từ xa)
 test/                  npm test (node --test, không cần thư viện)
 setup.js               cài đặt (hỏi–đáp hoặc --yes cho agent)
 mau/                   khung mẫu sổ điều phối + đoạn luật đội cho AGENTS.md / CLAUDE.md

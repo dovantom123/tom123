@@ -22,6 +22,7 @@ const alertsLib = require("./lib/alerts");
 const { createCommandQueue } = require("./lib/commandq");
 const tgbot = require("./lib/tgbot");
 const mailbox = require("./lib/mailbox");
+const tmuxsend = require("./lib/tmuxsend");
 
 const ROOT = __dirname;
 const CFG = loadConfig(ROOT);
@@ -640,11 +641,20 @@ const tgNotify = (text, who) => { if (alerter.enabled) alerter.notify(text, who)
 
 // Giao việc từ Telegram: chỉ chuyển cho phiên CÓ SẴN. Claude Code có hook → xếp hàng, giao khi phiên xong lượt (hết hạn nếu quá lâu).
 // Codex hoặc phiên chưa có hook → hòm thư (agent chỉ thấy khi chạy `vp tiep`, cần luật đội trong AGENTS.md / CLAUDE.md).
+const log_tmux = (m) => console.error("  tmux: " + m);
 async function giaoViec(agentKey, text) {
   const a = byKey[agentKey]; if (!a || a.ceo) return { ok: false, msg: "Không thấy người này trong văn phòng." };
   const body = String(text || "").slice(0, 2000), ttl = alerter.cfg.taskTtlMin, t = now();
   pushEvent({ t, kind: "ceo", from: "ceo", to: a.key, title: clip(mask(body), 110), body: clip(mask(body), 700) });
   const h = a.platform === "claude" ? hooks.view(a.id, t) : null;
+  // VPS: phiên chạy trong tmux và đang rảnh (đã xong ít nhất một lượt, nên không phải hộp thoại khởi động) → gõ thẳng việc vào phiên.
+  // Phiên đang chờ duyệt quyền / đang làm thì KHÔNG gõ (chữ gõ vào sẽ thành câu trả lời cho hộp thoại), mà xếp hàng như thường.
+  const lk = alerter.cfg.tmuxDelivery && a.platform === "claude" ? hooks.lastKnown(a.id) : null;
+  if (lk && lk.phase === "idle" && lk.doneAt && lk.pane) {
+    const r = await tmuxsend.send({ socket: lk.socket, pane: lk.pane, text: `[Việc từ ${CFG.ownerName} qua Telegram] ${body}` });
+    if (r.ok) return { ok: true, msg: `Đã gõ việc vào phiên ${a.name} (tmux ${lk.pane}).` };
+    log_tmux(`${a.name}: ${r.error}`);
+  }
   if (h && h.phase !== "ended") {
     const r = cmdq.push(a.id, { type: "message", text: `[Việc từ ${CFG.ownerName} qua Telegram] ${body}`, name: a.name, agentKey: a.key });
     if (!r.ok) return { ok: false, msg: `Không xếp được: ${r.error}.` };
