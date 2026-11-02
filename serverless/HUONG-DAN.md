@@ -137,6 +137,7 @@ Kết quả:
 - **THÀNH CÔNG … Bearer**: đại lý dùng kiểu Bearer, workflow cần chỉnh thêm (báo tôi, kèm kết quả).
 - **HTTP 404**: đại lý không có đường dẫn `/v1/messages`, tức là không tương thích API Anthropic, nên Claude Code không dùng được khóa này.
 - **HTTP 400**: thường sai tên mô hình.
+- **HTTP 503 "No available channel for model …"**: khóa dùng được nhưng nhóm kênh của khóa không có mô hình đó. Chạy `node serverless/scripts/check-api.cjs --models` để xem danh sách tên được dùng, chọn một tên rồi đặt vào `$env:MODEL`.
 - **HTTP 401 / 403**: khóa sai, hết hạn mức, hoặc bị từ chối.
 
 **Rủi ro cần nhắc, nhất là với đại lý bán "khóa rẻ":**
